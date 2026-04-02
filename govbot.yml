@@ -3,18 +3,13 @@
 # See: https://github.com/chihacknight/govbot
 
 # ── Repos ─────────────────────────────────────────────────────────────────────
-# Tells `govbot clone` which OpenStates data repo(s) to pull.
-# Use locale codes (il, ca, usa, etc.). Without this key govbot clones all 51.
 repos:
   - il
 
 # ── Urbanist Tags ─────────────────────────────────────────────────────────────
-# govbot logs | govbot tag  applies these against each bill's title, subject
-# array, and abstract. Bills can match multiple tags.
-# Schema: name (required), description, include_keywords, exclude_keywords,
-#         examples, negative_examples, threshold (0.0–1.0, default 0.5)
+# tags is a MAP keyed by tag name (not a list).
 tags:
-  - name: Housing
+  Housing:
     description: Bills related to housing, zoning, affordability, and development
     include_keywords:
       - housing
@@ -38,7 +33,7 @@ tags:
     exclude_keywords:
       - animal shelter
 
-  - name: Transit
+  Transit:
     description: Bills related to public transportation including buses, trains, and rail
     include_keywords:
       - transit
@@ -61,7 +56,7 @@ tags:
     exclude_keywords:
       - school bus
 
-  - name: Biking
+  Biking:
     description: Bills related to cycling infrastructure, bike lanes, and micromobility
     include_keywords:
       - bicycle
@@ -79,7 +74,7 @@ tags:
       - bike parking
     exclude_keywords: []
 
-  - name: Safe Streets
+  Safe Streets:
     description: Bills related to pedestrian safety, traffic calming, and Vision Zero
     include_keywords:
       - pedestrian
@@ -99,7 +94,7 @@ tags:
       - speeding
     exclude_keywords: []
 
-  - name: Transportation
+  Transportation:
     description: Broader transportation bills including roads, highways, and infrastructure
     include_keywords:
       - transportation
@@ -117,7 +112,6 @@ tags:
     exclude_keywords: []
 
 # ── RSS Feed Output ───────────────────────────────────────────────────────────
-# govbot build writes the tagged feed here; witness_slip_notifier.py reads it.
 build:
   output_dir: docs
   output_file: il-urbanist-feed.xml
