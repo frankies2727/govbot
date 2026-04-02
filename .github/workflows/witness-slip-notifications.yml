@@ -45,14 +45,6 @@ jobs:
       # emit a tagged RSS feed that the notifier can consume. No custom
       # scraping or keyword matching happens here — that’s govbot’s job.
       # ─────────────────────────────────────────────────────────────────
-      - name: Download govbot binary
-        run: |
-          mkdir -p .govbot/bin
-          curl -fsSL "https://github.com/chihacknight/govbot/releases/download/nightly/govbot-linux-x86_64" \
-            -o .govbot/bin/govbot
-          chmod +x .govbot/bin/govbot
-          echo ".govbot/bin" >> $GITHUB_PATH
-
       # Cache key includes today's date so the cache is busted once per day.
       # Within the same day, re-runs reuse the cache and skip the slow clone.
       - name: Get today's date for cache key
@@ -84,62 +76,39 @@ jobs:
           path: .govbot/repos
           key: govbot-il-v3-${{ runner.os }}-${{ steps.date.outputs.date }}
 
+      # ── DIAGNOSTIC (remove once confirmed working) ───────────────────
       - name: Inspect IL legislation repo
         run: |
           BASE=.govbot/repos/il-legislation/country:us/state:il/sessions/104th/bills
           echo "--- Total bills (metadata.json) ---"
-          find $BASE -name 'metadata.json' | wc -l
-          echo "--- Total log event files ---"
-          find $BASE -path '*/logs/*.json' | wc -l
-          echo "--- Sample log files under HB2270 ---"
-          ls $BASE/HB2270/logs/ 2>/dev/null | head -10 || echo "No logs dir"
-          echo "--- HB2270 metadata ---"
-          cat $BASE/HB2270/metadata.json 2>/dev/null | python3 -m json.tool --no-indent 2>/dev/null | head -30
-          echo "--- Bills WITH log entries (first 20) ---"
-          find $BASE -path '*/logs/*.json' -printf '%h\n' | sort -u \
-            | sed "s|$BASE/||;s|/logs||" | head -20
-          echo "--- Most recent log files across all bills ---"
-          find $BASE -path '*/logs/*.json' -printf '%T@ %p\n' \
-            | sort -rn | head -10 | awk '{print $2}'
-
-      - name: Tag bills
-        run: |
-          echo "🏷️  Tagging bills..."
-          echo "--- Raw log line count from govbot logs ---"
-          govbot logs --repos il --govbot-dir .govbot | wc -l
-          echo "--- First 5 log lines (raw) ---"
-          govbot logs --repos il --govbot-dir .govbot | head -5
-          echo "--- Running tag pipeline ---"
-          govbot logs --repos il --govbot-dir .govbot \
-            | govbot tag --output-dir . --govbot-dir .govbot
-          echo "--- Tagged files produced ---"
-          ls -la *.json 2>/dev/null | head -20 || echo "No JSON tag files"
-          echo "--- Tag file count ---"
-          ls *.json 2>/dev/null | wc -l
-
-      - name: Build RSS feed
-        id: govbot
-        run: |
-          mkdir -p docs
-          govbot build \
-            --output-dir docs \
-            --output-file il-urbanist-feed.xml \
-            --govbot-dir .govbot
-          echo "feed-path=${{ github.workspace }}/docs/il-urbanist-feed.xml" >> $GITHUB_OUTPUT
-
+          find "$BASE" -name 'metadata.json' | wc -l
+          echo "--- Bills with logs/ subdirs ---"
+          find "$BASE" -mindepth 2 -maxdepth 2 -name 'logs' -type d | wc -l
+          echo "--- Sample HB2270 metadata title ---"
+          python3 -c "
+import json, pathlib
+p = pathlib.Path('$BASE/HB2270/metadata.json')
+if p.exists():
+    d = json.loads(p.read_text())
+    print('title:', d.get('title'))
+    print('subjects:', d.get('subject'))
+else:
+    print('not found')
+"
       # ─────────────────────────────────────────────────────────────────
-      # STEP 2 — Scan the tagged RSS feed for bills with upcoming committee
-      #          hearings that have witness slips available, then build the
-      #          activist email digest.
+      # STEP 2 — Read metadata.json directly from the cloned IL repo.
+      #
+      # govbot logs only walks logs/ subdirs, which only exist for AM-type
+      # amendment bills. Real HB/SB bills store all actions in metadata.json.
+      # We skip govbot tag/build and run the notifier in --data-dir mode,
+      # pointing it at the sessions/104th/bills directory. The notifier's
+      # OpenStatesParser reads metadata.json for every bill, applies the
+      # same urbanist keyword matching, and builds the digest directly.
       # ─────────────────────────────────────────────────────────────────
-      - name: Debug feed output
+      - name: Set data dir path
+        id: datadir
         run: |
-          echo "--- Feed item count ---"
-          grep -c '<item>' docs/il-urbanist-feed.xml 2>/dev/null || echo "Feed not found"
-          echo "--- All GUIDs in feed ---"
-          grep '<guid>' docs/il-urbanist-feed.xml | sed 's/.*<guid>//;s/<\/guid>.*//' | head -30 || echo "No GUIDs"
-          echo "--- All titles in feed ---"
-          grep '<title>' docs/il-urbanist-feed.xml | grep -v 'Illinois Urbanist' | head -30 || echo "No titles"
+          echo "path=${{ github.workspace }}/.govbot/repos/il-legislation/country:us/state:il/sessions/104th/bills" >> $GITHUB_OUTPUT
 
       - name: Generate witness slip notifications
         env:
@@ -167,7 +136,7 @@ jobs:
         run: |
           python scripts/witness_slip_notifier.py \
             --mode github-action \
-            --feed docs/il-urbanist-feed.xml
+            --data-dir "${{ steps.datadir.outputs.path }}"
       
       - name: Send email notifications
         if: |
