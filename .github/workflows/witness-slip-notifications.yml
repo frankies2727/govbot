@@ -61,12 +61,15 @@ jobs:
 
       - name: Clone or update IL legislation repo
         run: |
-          if [ -d ".govbot/repos/il-legislation" ]; then
+          mkdir -p .govbot/repos
+          if [ -d ".govbot/repos/il-legislation/.git" ]; then
             echo "📂 Repo exists, pulling latest..."
-            cd .govbot/repos/il-legislation && git pull --ff-only
+            git -C .govbot/repos/il-legislation pull --ff-only
           else
             echo "📥 Fresh clone..."
-            govbot clone il --govbot-dir .govbot
+            git clone --depth=1 \
+              https://github.com/govbot-openstates-scrapers/il-legislation.git \
+              .govbot/repos/il-legislation
           fi
 
       - name: Save repo cache
@@ -84,17 +87,17 @@ jobs:
           find "$BASE" -name 'metadata.json' | wc -l
           echo "--- Bills with logs/ subdirs ---"
           find "$BASE" -mindepth 2 -maxdepth 2 -name 'logs' -type d | wc -l
-          echo "--- Sample HB2270 metadata title ---"
-          python3 -c "
-import json, pathlib
-p = pathlib.Path('$BASE/HB2270/metadata.json')
+          echo "--- Sample HB2270 title ---"
+          python3 - <<'PYEOF'
+import json, pathlib, sys
+p = pathlib.Path('.govbot/repos/il-legislation/country:us/state:il/sessions/104th/bills/HB2270/metadata.json')
 if p.exists():
     d = json.loads(p.read_text())
     print('title:', d.get('title'))
     print('subjects:', d.get('subject'))
 else:
     print('not found')
-"
+PYEOF
       # ─────────────────────────────────────────────────────────────────
       # STEP 2 — Read metadata.json directly from the cloned IL repo.
       #
