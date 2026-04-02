@@ -240,23 +240,56 @@ class GovbotFeedParser:
 
         title_raw   = text('title')
         guid        = text('guid')
-        link        = text('link')
         description = text('description')
+        # note: link is example.com placeholder in govbot feed — ignore it
 
-        # Try every possible location for the bill identifier, most to least reliable.
-        # Pattern covers HB, SB, HR, SR + digits (govbot uses HB/SB but be safe).
-        BILL_RE = re.compile(r'\b([HS][BCR]?\d+)\b', re.I)
+        # ── Extract bill identifier ──────────────────────────────────────
+        # govbot GUID format:
+        #   il-legislation/country:us/state:il/sessions/104th/bills/HB2270/logs/...
+        #   il-legislation/country:us/state:il/sessions/104th/bills/AM1030415/logs/...
+        #
+        # For HB/SB bills: use the GUID path segment directly.
+        # For AM (amendment) bills: fall back to the title which contains the
+        # underlying bill number as "HB NNNN" or "SB NNNN".
+        # Title format: "Tag1, Tag2 - repo - BILL-TYPE IDENTIFIER: TITLE"
+        #   e.g. "Housing, Transportation - il-legislation - APPOINT-ASHISH SHARMA"
+        #   e.g. "Biking - il-legislation - HB 2454: BICYCLES-ROADWAYS"
+
+        BILL_RE   = re.compile(r'\b([HS][BCR]\d+)\b', re.I)   # HB/SB/HR/SR
+        AM_RE     = re.compile(r'\bAM(\d+)\b', re.I)           # amendment IDs
+        GUID_BILL = re.compile(r'/bills/([A-Z]{2,3}\d+)/', re.I) # anything in /bills/.../
 
         bill_id = None
-        for candidate in [guid, link, title_raw]:
-            m = BILL_RE.search(candidate)
-            if m:
-                bill_id = m.group(1).upper()
-                break
+
+        # 1. Prefer standard bill IDs from GUID path
+        gm = GUID_BILL.search(guid)
+        if gm:
+            raw = gm.group(1).upper()
+            if BILL_RE.match(raw):
+                bill_id = raw
+            # If it's an AM id, try extracting HB/SB from title
+            elif AM_RE.match(raw):
+                tm2 = BILL_RE.search(title_raw)
+                if tm2:
+                    bill_id = tm2.group(1).upper()
+
+        # 2. Fallback: scan title for HB/SB pattern
+        if not bill_id:
+            tm2 = BILL_RE.search(title_raw)
+            if tm2:
+                bill_id = tm2.group(1).upper()
 
         if not bill_id:
-            print(f"  [skip] no bill id found | guid={guid[:60]!r} title={title_raw[:60]!r}")
+            # Skip silently — AM appointments, proclamations, etc.
             return None
+
+        # ── Build ILGA URL from GUID (never trust the example.com link) ──
+        num_only  = re.sub(r'[^\d]', '', bill_id)
+        doc_type  = 'HB' if bill_id.startswith('H') else 'SB'
+        ilga_base = (
+            f"https://www.ilga.gov/legislation/BillStatus.asp"
+            f"?DocTypeID={doc_type}&DocNum={num_only}&GAID=18&SessionID=114"
+        )
 
         categories  = [c.text.strip() for c in item.findall('category') if c.text]
         chamber     = Chamber.HOUSE if bill_id.startswith('H') else Chamber.SENATE
@@ -285,18 +318,11 @@ class GovbotFeedParser:
                    else BillReading.SECOND if 'second reading' in ad
                    else BillReading.FIRST)
 
-        doc_type = 'HB' if chamber == Chamber.HOUSE else 'SB'
-        num      = re.sub(r'[^\d]', '', bill_id)
-        ilga_url = (
-            f"https://www.ilga.gov/legislation/BillStatus.asp"
-            f"?DocTypeID={doc_type}&DocNum={num}&GAID=18&SessionID=114"
-        )
-
         return Bill(
             bill_number=bill_id, chamber=chamber, title=bill_title,
             sponsor='Unknown', next_reading=reading, subjects=categories,
             committee_hearing_date=None, committee_name=committee_name,
-            ilga_url=ilga_url,
+            ilga_url=ilga_base,
         )
 
 
@@ -971,6 +997,37 @@ def main():
             b.stance = info[2] if info else 'Proponent'
     print(f"📊 Total actionable (feed + STC tracked): {len(actionable)}")
     
+    # Always include STC tracked bills as stubs (even when feed is stale/empty)
+    import re as _re
+    feed_ids = {b.bill_number for b in actionable}
+    stc_added = 0
+    for bill_num, (category, description, stance) in STC_TRACKED_BILLS.items():
+        norm = _re.sub(r'\s+', '', bill_num.upper())
+        if norm not in feed_ids:
+            chamber = Chamber.HOUSE if norm.startswith('H') else Chamber.SENATE
+            num_only = _re.sub(r'[^\d]', '', norm)
+            doc_type = 'HB' if chamber == Chamber.HOUSE else 'SB'
+            stub = Bill(
+                bill_number=norm, chamber=chamber,
+                title=description, sponsor='Unknown',
+                next_reading=BillReading.FIRST,
+                subjects=[category],
+                ilga_url=(
+                    f"https://www.ilga.gov/legislation/BillStatus.asp"
+                    f"?DocTypeID={doc_type}&DocNum={num_only}&GAID=18&SessionID=114"
+                ),
+            )
+            stub.stance = stance
+            actionable.append(stub)
+            feed_ids.add(norm)
+            stc_added += 1
+    # Tag stance on any feed bills that are also in STC list
+    for b in actionable:
+        if not hasattr(b, 'stance'):
+            info = STC_TRACKED_BILLS.get(b.bill_number)
+            b.stance = info[2] if info else 'Proponent'
+    print(f"📊 Feed bills: {len(actionable)-stc_added}, STC stubs added: {stc_added}, total: {len(actionable)}")
+
     if not actionable:
         print("✅ No actionable bills.")
         if args.mode == 'github-action':
