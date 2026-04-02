@@ -2,108 +2,119 @@
 # This file drives the govbot clone → tag → RSS pipeline.
 # See: https://github.com/chihacknight/govbot
 
-# ── Jurisdiction ──────────────────────────────────────────────────────────────
-# Tells `govbot clone all` which OpenStates data repo to pull.
-jurisdictions:
-  - id: il
-    name: Illinois
-    repo: https://github.com/govbot-openstates-scrapers/il-legislation
-    # Path inside the cloned repo where bill metadata.json files live
-    data_path: _data/il
+# ── Repos ─────────────────────────────────────────────────────────────────────
+# Tells `govbot clone` which OpenStates data repo(s) to pull.
+# Use locale codes (il, ca, usa, etc.). Without this key govbot clones all 51.
+repos:
+  - il
 
 # ── Urbanist Tags ─────────────────────────────────────────────────────────────
 # govbot logs | govbot tag  applies these against each bill's title, subject
 # array, and abstract. Bills can match multiple tags.
+# Schema: name (required), description, include_keywords, exclude_keywords,
+#         examples, negative_examples, threshold (0.0–1.0, default 0.5)
 tags:
   - name: Housing
-    keywords:
-      - Housing
-      - Affordable Housing
-      - Real Estate
-      - Zoning
-      - Land Use
-      - Development
-      - Rent
-      - Eviction
+    description: Bills related to housing, zoning, affordability, and development
+    include_keywords:
+      - housing
+      - affordable housing
+      - real estate
+      - zoning
+      - land use
+      - development
+      - rent
+      - eviction
       - ADU
-      - Accessory Dwelling
-      - Upzoning
-      - Transit-Oriented Development
+      - accessory dwelling
+      - upzoning
+      - transit-oriented development
       - TOD
-      - Mixed-Use
-      - Landlord
-      - Tenant
-      - Homelessness
-      - Shelter
+      - mixed-use
+      - landlord
+      - tenant
+      - homelessness
+      - shelter
+    exclude_keywords:
+      - animal shelter
 
   - name: Transit
-    keywords:
-      - Transit
-      - Bus
-      - Rail
+    description: Bills related to public transportation including buses, trains, and rail
+    include_keywords:
+      - transit
+      - bus
+      - rail
       - CTA
       - Metra
       - Pace
       - RTA
-      - Light Rail
-      - Commuter Rail
-      - Subway
-      - Public Transportation
+      - light rail
+      - commuter rail
+      - subway
+      - public transportation
       - GTFS
       - BRT
-      - Bus Rapid Transit
-      - Train
-      - Fare
-      - Ridership
+      - bus rapid transit
+      - train
+      - fare
+      - ridership
+    exclude_keywords:
+      - school bus
 
   - name: Biking
-    keywords:
-      - Bicycle
-      - Biking
-      - Bike Lane
-      - Bike Path
-      - Bike Share
+    description: Bills related to cycling infrastructure, bike lanes, and micromobility
+    include_keywords:
+      - bicycle
+      - biking
+      - bike lane
+      - bike path
+      - bike share
       - Divvy
-      - Cycling
-      - Cyclist
-      - Micromobility
-      - E-Bike
-      - Electric Bike
-      - Bike Infrastructure
-      - Bike Parking
+      - cycling
+      - cyclist
+      - micromobility
+      - e-bike
+      - electric bike
+      - bike infrastructure
+      - bike parking
+    exclude_keywords: []
 
   - name: Safe Streets
-    keywords:
-      - Pedestrian
-      - Safe Streets
+    description: Bills related to pedestrian safety, traffic calming, and Vision Zero
+    include_keywords:
+      - pedestrian
+      - safe streets
       - Vision Zero
-      - Complete Streets
-      - Traffic Safety
-      - Crosswalk
-      - Sidewalk
-      - Speed Limit
-      - Road Safety
-      - Traffic Calming
-      - School Zone
-      - Distracted Driving
-      - Hit and Run
-      - Fatality
-      - Speeding
+      - complete streets
+      - traffic safety
+      - crosswalk
+      - sidewalk
+      - speed limit
+      - road safety
+      - traffic calming
+      - school zone
+      - distracted driving
+      - hit and run
+      - fatality
+      - speeding
+    exclude_keywords: []
 
   - name: Transportation
-    keywords:
-      - Transportation
-      - Highway
-      - Road
-      - Infrastructure
+    description: Broader transportation bills including roads, highways, and infrastructure
+    include_keywords:
+      - transportation
+      - highway
+      - road
+      - infrastructure
       - IDOT
-      - Motor Vehicle
-      - Parking
-      - Tollway
-      - Expressway
-      - Bridge
-      - Traffic
-      - Congestion
+      - motor vehicle
+      - parking
+      - tollway
+      - expressway
+      - bridge
+      - traffic
+      - congestion
+    exclude_keywords: []
 
 # ── RSS Feed Output ───────────────────────────────────────────────────────────
 # govbot build writes the tagged feed here; witness_slip_notifier.py reads it.
@@ -113,11 +124,3 @@ build:
   title: "Illinois Urbanist Bills — Govbot Feed"
   description: "IL legislative bills tagged for urbanist advocacy: Housing, Transit, Biking, Safe Streets, Transportation"
   link: https://chihacknight.github.io/govbot/il-urbanist-feed.xml
-  # Emit one feed entry per tag so the notifier can filter by category
-  feed_per_tag: true
-  tags:
-    - Housing
-    - Transit
-    - Biking
-    - Safe Streets
-    - Transportation
