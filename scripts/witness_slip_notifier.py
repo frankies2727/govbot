@@ -174,6 +174,17 @@ class GovbotFeedParser:
         items = channel.findall('item')
         print(f"📄 Found {len(items)} feed items")
 
+        # Debug: print first item's raw fields so we can see real GUID format
+        if items:
+            def _t(el, tag):
+                e = el.find(tag); return e.text.strip() if e is not None and e.text else ''
+            sample = items[0]
+            print(f"  [debug] title:  {_t(sample,'title')[:80]}")
+            print(f"  [debug] guid:   {_t(sample,'guid')[:120]}")
+            print(f"  [debug] link:   {_t(sample,'link')[:120]}")
+            cats = [c.text.strip() for c in sample.findall('category') if c.text]
+            print(f"  [debug] cats:   {cats}")
+
         # Deduplicate by bill identifier — one Bill object per bill.
         seen: dict[str, "Bill"] = {}
 
@@ -229,19 +240,23 @@ class GovbotFeedParser:
 
         title_raw   = text('title')
         guid        = text('guid')
+        link        = text('link')
         description = text('description')
 
-        # Bill id from GUID path: .../bills/HB2270/logs/...
-        m = re.search(r'/bills/([HS][BCR]\d+)/', guid)
-        if not m:
-            parts = title_raw.split(' - ')
-            last = parts[-1].strip() if parts else ''
-            m2 = re.match(r'([HS][BCR]\d+)', last)
-            if not m2:
-                return None
-            bill_id = m2.group(1).upper()
-        else:
-            bill_id = m.group(1).upper()
+        # Try every possible location for the bill identifier, most to least reliable.
+        # Pattern covers HB, SB, HR, SR + digits (govbot uses HB/SB but be safe).
+        BILL_RE = re.compile(r'\b([HS][BCR]?\d+)\b', re.I)
+
+        bill_id = None
+        for candidate in [guid, link, title_raw]:
+            m = BILL_RE.search(candidate)
+            if m:
+                bill_id = m.group(1).upper()
+                break
+
+        if not bill_id:
+            print(f"  [skip] no bill id found | guid={guid[:60]!r} title={title_raw[:60]!r}")
+            return None
 
         categories  = [c.text.strip() for c in item.findall('category') if c.text]
         chamber     = Chamber.HOUSE if bill_id.startswith('H') else Chamber.SENATE
