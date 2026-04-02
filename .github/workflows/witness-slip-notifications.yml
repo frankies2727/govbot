@@ -3,14 +3,19 @@ name: IL Witness Slip Notifications - Urbanist Topics
 on:
   repository_dispatch:
     types: [il-data-updated]
-  
+
+  # Temporary: fires on push to this branch so the workflow is testable
+  # before merging to main. Remove before merging.
+  push:
+    branches: [il-witness-slip-poc]
+
   workflow_dispatch:
     inputs:
       test_mode:
         description: 'Test mode (no emails sent)'
         required: false
         default: 'false'
-  
+
   schedule:
     - cron: '0 9 * * 1-5'
 
