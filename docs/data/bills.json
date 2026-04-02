@@ -1,0 +1,214 @@
+{
+  "generated_at": "2026-04-02T19:45:12Z",
+  "bills": [
+    {
+      "bill_number": "HB5626",
+      "chamber": "House",
+      "title": "BUILD Act (Omnibus) — House omnibus housing bill",
+      "category": "Housing",
+      "stance": "Proponent",
+      "witness_slip_url": "https://www.ilga.gov/legislation/BillStatus.asp?DocTypeID=HB&DocNum=5626&GAID=18&SessionID=114#tab=witnessSlips",
+      "committee_hearing_date": null,
+      "committee_name": null,
+      "source": "stc_tracked"
+    },
+    {
+      "bill_number": "SB4061",
+      "chamber": "Senate",
+      "title": "BUILD Act — Single stair reform",
+      "category": "Housing",
+      "stance": "Proponent",
+      "witness_slip_url": "https://www.ilga.gov/legislation/BillStatus.asp?DocTypeID=SB&DocNum=4061&GAID=18&SessionID=114#tab=witnessSlips",
+      "committee_hearing_date": null,
+      "committee_name": null,
+      "source": "stc_tracked"
+    },
+    {
+      "bill_number": "SB4064",
+      "chamber": "Senate",
+      "title": "BUILD Act — Parking reform (caps minimums)",
+      "category": "Housing",
+      "stance": "Proponent",
+      "witness_slip_url": "https://www.ilga.gov/legislation/BillStatus.asp?DocTypeID=SB&DocNum=4064&GAID=18&SessionID=114#tab=witnessSlips",
+      "committee_hearing_date": null,
+      "committee_name": null,
+      "source": "stc_tracked"
+    },
+    {
+      "bill_number": "SB4062",
+      "chamber": "Senate",
+      "title": "BUILD Act — Impact fee modernization",
+      "category": "Housing",
+      "stance": "Proponent",
+      "witness_slip_url": "https://www.ilga.gov/legislation/BillStatus.asp?DocTypeID=SB&DocNum=4062&GAID=18&SessionID=114#tab=witnessSlips",
+      "committee_hearing_date": null,
+      "committee_name": null,
+      "source": "stc_tracked"
+    },
+    {
+      "bill_number": "SB4060",
+      "chamber": "Senate",
+      "title": "BUILD Act — 2–8 units by right (missing middle)",
+      "category": "Housing",
+      "stance": "Proponent",
+      "witness_slip_url": "https://www.ilga.gov/legislation/BillStatus.asp?DocTypeID=SB&DocNum=4060&GAID=18&SessionID=114#tab=witnessSlips",
+      "committee_hearing_date": null,
+      "committee_name": null,
+      "source": "stc_tracked"
+    },
+    {
+      "bill_number": "SB4071",
+      "chamber": "Senate",
+      "title": "BUILD Act — Legalizes ADUs statewide",
+      "category": "Housing",
+      "stance": "Proponent",
+      "witness_slip_url": "https://www.ilga.gov/legislation/BillStatus.asp?DocTypeID=SB&DocNum=4071&GAID=18&SessionID=114#tab=witnessSlips",
+      "committee_hearing_date": null,
+      "committee_name": null,
+      "source": "stc_tracked"
+    },
+    {
+      "bill_number": "SB4063",
+      "chamber": "Senate",
+      "title": "BUILD Act — Third-party review for housing permits",
+      "category": "Housing",
+      "stance": "Proponent",
+      "witness_slip_url": "https://www.ilga.gov/legislation/BillStatus.asp?DocTypeID=SB&DocNum=4063&GAID=18&SessionID=114#tab=witnessSlips",
+      "committee_hearing_date": null,
+      "committee_name": null,
+      "source": "stc_tracked"
+    },
+    {
+      "bill_number": "HB5083",
+      "chamber": "House",
+      "title": "YIGBY — Faith-based housing & mixed-use by-right",
+      "category": "Housing",
+      "stance": "Proponent",
+      "witness_slip_url": "https://www.ilga.gov/legislation/BillStatus.asp?DocTypeID=HB&DocNum=5083&GAID=18&SessionID=114#tab=witnessSlips",
+      "committee_hearing_date": null,
+      "committee_name": null,
+      "source": "stc_tracked"
+    },
+    {
+      "bill_number": "SB3187",
+      "chamber": "Senate",
+      "title": "YIGBY — Faith-based housing & mixed-use by-right",
+      "category": "Housing",
+      "stance": "Proponent",
+      "witness_slip_url": "https://www.ilga.gov/legislation/BillStatus.asp?DocTypeID=SB&DocNum=3187&GAID=18&SessionID=114#tab=witnessSlips",
+      "committee_hearing_date": null,
+      "committee_name": null,
+      "source": "stc_tracked"
+    },
+    {
+      "bill_number": "HB4835",
+      "chamber": "House",
+      "title": "Adaptive reuse of commercial buildings",
+      "category": "Housing",
+      "stance": "Proponent",
+      "witness_slip_url": "https://www.ilga.gov/legislation/BillStatus.asp?DocTypeID=HB&DocNum=4835&GAID=18&SessionID=114#tab=witnessSlips",
+      "committee_hearing_date": null,
+      "committee_name": null,
+      "source": "stc_tracked"
+    },
+    {
+      "bill_number": "HB5198",
+      "chamber": "House",
+      "title": "AHPAA Improvement Act",
+      "category": "Housing",
+      "stance": "Proponent",
+      "witness_slip_url": "https://www.ilga.gov/legislation/BillStatus.asp?DocTypeID=HB&DocNum=5198&GAID=18&SessionID=114#tab=witnessSlips",
+      "committee_hearing_date": null,
+      "committee_name": null,
+      "source": "stc_tracked"
+    },
+    {
+      "bill_number": "SB3478",
+      "chamber": "Senate",
+      "title": "Bike grid enabling legislation",
+      "category": "Biking",
+      "stance": "Proponent",
+      "witness_slip_url": "https://www.ilga.gov/legislation/BillStatus.asp?DocTypeID=SB&DocNum=3478&GAID=18&SessionID=114#tab=witnessSlips",
+      "committee_hearing_date": null,
+      "committee_name": null,
+      "source": "stc_tracked"
+    },
+    {
+      "bill_number": "HB4660",
+      "chamber": "House",
+      "title": "Idaho Stop — legalizes yield-at-stop for cyclists",
+      "category": "Biking",
+      "stance": "Proponent",
+      "witness_slip_url": "https://www.ilga.gov/legislation/BillStatus.asp?DocTypeID=HB&DocNum=4660&GAID=18&SessionID=114#tab=witnessSlips",
+      "committee_hearing_date": null,
+      "committee_name": null,
+      "source": "stc_tracked"
+    },
+    {
+      "bill_number": "HB4925",
+      "chamber": "House",
+      "title": "Class 3 e-bike: 18+ to carry passenger under 18",
+      "category": "Biking",
+      "stance": "Proponent",
+      "witness_slip_url": "https://www.ilga.gov/legislation/BillStatus.asp?DocTypeID=HB&DocNum=4925&GAID=18&SessionID=114#tab=witnessSlips",
+      "committee_hearing_date": null,
+      "committee_name": null,
+      "source": "stc_tracked"
+    },
+    {
+      "bill_number": "HB4281",
+      "chamber": "House",
+      "title": "Speed cameras in Cook County cities 25k+ population",
+      "category": "Safe Streets",
+      "stance": "Proponent",
+      "witness_slip_url": "https://www.ilga.gov/legislation/BillStatus.asp?DocTypeID=HB&DocNum=4281&GAID=18&SessionID=114#tab=witnessSlips",
+      "committee_hearing_date": null,
+      "committee_name": null,
+      "source": "stc_tracked"
+    },
+    {
+      "bill_number": "HB4333",
+      "chamber": "House",
+      "title": "Lowers DUI BAC threshold 0.08% → 0.05%",
+      "category": "Safe Streets",
+      "stance": "Proponent",
+      "witness_slip_url": "https://www.ilga.gov/legislation/BillStatus.asp?DocTypeID=HB&DocNum=4333&GAID=18&SessionID=114#tab=witnessSlips",
+      "committee_hearing_date": null,
+      "committee_name": null,
+      "source": "stc_tracked"
+    },
+    {
+      "bill_number": "HB4759",
+      "chamber": "House",
+      "title": "Green Light for Buses — transit signal priority",
+      "category": "Transit",
+      "stance": "Proponent",
+      "witness_slip_url": "https://www.ilga.gov/legislation/BillStatus.asp?DocTypeID=HB&DocNum=4759&GAID=18&SessionID=114#tab=witnessSlips",
+      "committee_hearing_date": null,
+      "committee_name": null,
+      "source": "stc_tracked"
+    },
+    {
+      "bill_number": "SB3627",
+      "chamber": "Senate",
+      "title": "Quick Build — IDOT must accept quick-build safety infra",
+      "category": "Safe Streets",
+      "stance": "Proponent",
+      "witness_slip_url": "https://www.ilga.gov/legislation/BillStatus.asp?DocTypeID=SB&DocNum=3627&GAID=18&SessionID=114#tab=witnessSlips",
+      "committee_hearing_date": null,
+      "committee_name": null,
+      "source": "stc_tracked"
+    },
+    {
+      "bill_number": "HB5081",
+      "chamber": "House",
+      "title": "REMOVES safety zones when speed limit lowered to 20 mph",
+      "category": "Safe Streets",
+      "stance": "Opponent",
+      "witness_slip_url": "https://www.ilga.gov/legislation/BillStatus.asp?DocTypeID=HB&DocNum=5081&GAID=18&SessionID=114#tab=witnessSlips",
+      "committee_hearing_date": null,
+      "committee_name": null,
+      "source": "stc_tracked"
+    }
+  ]
+}
