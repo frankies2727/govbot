@@ -10,11 +10,16 @@ on:
     branches: [il-witness-slip-poc]
 
   workflow_dispatch:
-    inputs:
-      test_mode:
-        description: 'Test mode (no emails sent)'
-        required: false
-        default: 'false'
+      inputs:
+        test_mode:
+          description: 'Skip sending email'
+          required: false
+          default: 'false'
+        check_slip_live:
+          description: 'Check ILGA live for open witness slips (slower, more accurate)'
+          required: false
+          default: 'false'
+
 
   schedule:
     - cron: '0 9 * * 1-5'
@@ -115,6 +120,8 @@ jobs:
           USER_NAME: ${{ secrets.WITNESS_SLIP_USER_NAME }}
           USER_EMAIL: ${{ secrets.WITNESS_SLIP_USER_EMAIL }}
           USER_ORG: ${{ secrets.WITNESS_SLIP_ORG }}
+          CHECK_SLIP_LIVE: ${{ github.event.inputs.check_slip_live || 'false' }}
+
 
           # ── Per-tag recipient lists (comma-separated email addresses) ────
           # Each secret is optional; omit a tag’s secret to skip that list.

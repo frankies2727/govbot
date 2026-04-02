@@ -430,26 +430,40 @@ class OpenStatesParser:
                 elif 'second reading' in desc:
                     next_reading = BillReading.SECOND
                     break
-            
-            # Committee info
+
+            # Committee info — find most recent referral/assignment action
             committee_date = None
             committee_name = None
-            for action in actions:
-                desc = action.get('description', '').lower()
-                if 'committee' in desc and 'hearing' in desc:
-                    date_str = action.get('date')
+            committee_keywords = ('assigned to', 'referred to', 're-referred to',
+                                  'added to', 'placed on')
+            for action in reversed(actions):
+                desc = action.get('description', '')
+                desc_lower = desc.lower()
+                if any(kw in desc_lower for kw in committee_keywords):
+                    committee_name = desc
+                    date_str = action.get('date', '')
                     if date_str:
                         try:
-                            committee_date = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
-                        except:
+                            committee_date = datetime.strptime(date_str[:10], '%Y-%m-%d')
+                        except ValueError:
                             pass
-                    org = action.get('organization', {})
-                    committee_name = org.get('name')
                     break
-            
-            # URL
-            sources = bill_data.get('sources', [])
-            ilga_url = sources[0].get('url') if sources else None
+
+            # ILGA source URL
+            ilga_url = None
+            for src in bill_data.get('sources', []):
+                url = src.get('url', '') if isinstance(src, dict) else str(src)
+                if 'ilga.gov' in url:
+                    ilga_url = url
+                    break
+
+            return Bill(
+                bill_number=identifier, chamber=chamber, title=title,
+                sponsor=sponsor, next_reading=next_reading, subjects=subjects,
+                committee_hearing_date=committee_date,
+                committee_name=committee_name, ilga_url=ilga_url,
+            )
+
             
             return Bill(
                 bill_number=identifier,
@@ -466,6 +480,74 @@ class OpenStatesParser:
         except Exception as e:
             print(f"⚠️  Error parsing bill: {e}")
             return None
+        @staticmethod
+    def scrape_ilga_committee_hearings() -> dict:
+        """Scrape upcoming committee hearings from ILGA's public calendar.
+
+        Returns a dict of {committee_name_lower: [hearing_date, ...]} so callers
+        can cross-reference bills assigned to a committee against scheduled dates.
+        """
+        import re
+        hearings = {}
+        for chamber_path in ('house/committees', 'senate/committees'):
+            url = f'https://ilga.gov/{chamber_path}/'
+            try:
+                resp = requests.get(url, timeout=15,
+                                    headers={'User-Agent': 'govbot-urbanist/1.0'})
+                resp.raise_for_status()
+            except Exception as e:
+                print(f'⚠️  Could not fetch ILGA committee page ({url}): {e}')
+                continue
+
+            # ILGA committee pages list hearings in <td> cells with date text
+            # Pattern: "Thursday, April 3, 2026" near a committee name
+            date_re = re.compile(
+                r'(\w+day,\s+\w+\s+\d{1,2},\s+\d{4})', re.I)
+            committee_re = re.compile(
+                r'Committee on (.+?)(?:</|,|\n)', re.I)
+
+            current_committee = None
+            for line in resp.text.splitlines():
+                cm = committee_re.search(line)
+                if cm:
+                    current_committee = cm.group(1).strip().lower()
+                dm = date_re.search(line)
+                if dm and current_committee:
+                    try:
+                        d = datetime.strptime(dm.group(1), '%A, %B %d, %Y')
+                        hearings.setdefault(current_committee, []).append(d)
+                    except ValueError:
+                        pass
+
+        return hearings
+
+    @staticmethod
+    def check_slip_open(ilga_url: str) -> bool:
+        """Return True if ILGA's BillStatus page shows an active witness slip form.
+
+        The Witness Slips tab on ILGA only contains a form/table when slips are
+        open for that bill. We do a lightweight GET and look for the tell-tale
+        'Create Slip' link or the witness slip form action URL.
+        """
+        if not ilga_url or 'ilga.gov' not in ilga_url:
+            return False
+        try:
+            resp = requests.get(ilga_url, timeout=15,
+                                headers={'User-Agent': 'govbot-urbanist/1.0'})
+            resp.raise_for_status()
+            text = resp.text
+            # ILGA uses these markers when witness slips are open
+            slip_markers = (
+                'WitnessSlip',
+                'witnessslip',
+                'Create Slip',
+                'createSlip',
+                'Witness Slip Form',
+            )
+            return any(m in text for m in slip_markers)
+        except Exception:
+            return False
+
 
 
 def fetch_sample_bills() -> str:
