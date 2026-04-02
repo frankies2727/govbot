@@ -457,13 +457,6 @@ class OpenStatesParser:
                     ilga_url = url
                     break
 
-            return Bill(
-                bill_number=identifier, chamber=chamber, title=title,
-                sponsor=sponsor, next_reading=next_reading, subjects=subjects,
-                committee_hearing_date=committee_date,
-                committee_name=committee_name, ilga_url=ilga_url,
-            )
-
             
             return Bill(
                 bill_number=identifier,
@@ -480,7 +473,7 @@ class OpenStatesParser:
         except Exception as e:
             print(f"⚠️  Error parsing bill: {e}")
             return None
-        @staticmethod
+    @staticmethod
     def scrape_ilga_committee_hearings() -> dict:
         """Scrape upcoming committee hearings from ILGA's public calendar.
 
@@ -1030,20 +1023,64 @@ def main():
     # window — topic matching is the only meaningful filter.
     URBANIST_TOPICS = {'Housing', 'Biking', 'Safe Streets', 'Transit', 'Transportation'}
     now = datetime.now()
+
     if args.feed:
         actionable = [b for b in bills if b.subjects]
     else:
-        actionable = [b for b in bills if
-                      b.subjects and set(b.subjects) & URBANIST_TOPICS]
+        # Step 1: topic match
+        topic_matched = [b for b in bills
+                         if b.subjects and set(b.subjects) & URBANIST_TOPICS]
 
-    if not actionable:
-        msg = "No actionable bills (no tagged bills in feed and STC list is empty)."
-        print(f"⚠️  {msg}")
-        if args.mode == 'github-action':
-            Path('notifications_output.txt').write_text(msg + '\n')
-            Path('notifications_output.html').write_text(f'<p>{msg}</p>')
-            Path('witness_slip_notifications.json').write_text('[]')
-        sys.exit(0)
+        # Step 2: committee referral filter
+        # Bills whose most recent meaningful action is a committee assignment
+        # are the most likely to have an imminent hearing.
+        in_committee = [b for b in topic_matched if b.committee_name]
+        not_in_committee = [b for b in topic_matched if not b.committee_name]
+
+        if in_committee:
+            print(f'🏛️  {len(in_committee)} bills currently in committee '
+                  f'(+ {len(not_in_committee)} not yet assigned)')
+
+        # Step 3: cross-reference ILGA hearing calendar
+        print('📅 Fetching ILGA committee hearing calendar...')
+        hearings = OpenStatesParser.scrape_ilga_committee_hearings()
+        if hearings:
+            print(f'   Found hearings for {len(hearings)} committees')
+            hearing_soon = []
+            for b in in_committee:
+                cname = (b.committee_name or '').lower()
+                # Fuzzy match: any word in the committee name appears in hearings dict key
+                matched_key = next(
+                    (k for k in hearings if
+                     any(word in k for word in cname.split() if len(word) > 4)),
+                    None)
+                if matched_key:
+                    upcoming = [d for d in hearings[matched_key] if d >= now]
+                    if upcoming:
+                        b.committee_hearing_date = min(upcoming)
+                        hearing_soon.append(b)
+            if hearing_soon:
+                print(f'   ✅ {len(hearing_soon)} bills have hearings on the calendar')
+        else:
+            print('   ⚠️  Could not fetch hearing calendar — showing all committee-referred bills')
+            hearing_soon = in_committee
+
+        # Step 4: optionally verify witness slip is actually open on ILGA
+        check_slips = os.environ.get('CHECK_SLIP_LIVE', '').lower() in ('1', 'true', 'yes')
+        if check_slips and hearing_soon:
+            print(f'🔍 Checking live slip status for {len(hearing_soon)} bills...')
+            slip_open = []
+            for b in hearing_soon:
+                if OpenStatesParser.check_slip_open(b.ilga_url):
+                    slip_open.append(b)
+                    print(f'   ✅ Slip open: {b.bill_number}')
+                else:
+                    print(f'   ⏳ No active slip yet: {b.bill_number}')
+            actionable = slip_open if slip_open else hearing_soon
+        else:
+            # Without live check: bills with hearings on calendar, then all in-committee, then all matched
+            actionable = hearing_soon if hearing_soon else (in_committee if in_committee else topic_matched)
+
 
     # ── Group by category for display ───────────────────────────────────────────────
     from collections import defaultdict
