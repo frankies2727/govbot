@@ -473,7 +473,7 @@ class EnvironmentConfig:
                 'tracked_bills': [b.strip() for b in os.getenv('TRACKED_BILLS', '').split(',') if b.strip()]
             },
             'settings': {
-                'urgency_threshold_days': int(os.getenv('URGENCY_THRESHOLD_DAYS', '7'))
+                'urgency_threshold_days': int(os.getenv('URGENCY_THRESHOLD_DAYS') or '7')
             }
         }
 
@@ -483,7 +483,7 @@ def send_email(subject: str, plain_body: str, html_body: str, recipients: List[s
         return
 
     host = os.getenv("SMTP_HOST", "localhost")
-    port = int(os.getenv("SMTP_PORT", "1025"))
+    port = int(os.getenv("SMTP_PORT") or "1025")
     username = os.getenv("SMTP_USER", "")
     password = os.getenv("SMTP_PASSWORD", "")
 
