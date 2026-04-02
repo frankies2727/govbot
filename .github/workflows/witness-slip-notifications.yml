@@ -79,25 +79,6 @@ jobs:
           path: .govbot/repos
           key: govbot-il-v3-${{ runner.os }}-${{ steps.date.outputs.date }}
 
-      # ── DIAGNOSTIC (remove once confirmed working) ───────────────────
-      - name: Inspect IL legislation repo
-        run: |
-          BASE=.govbot/repos/il-legislation/country:us/state:il/sessions/104th/bills
-          echo "--- Total bills (metadata.json) ---"
-          find "$BASE" -name 'metadata.json' | wc -l
-          echo "--- Bills with logs/ subdirs ---"
-          find "$BASE" -mindepth 2 -maxdepth 2 -name 'logs' -type d | wc -l
-          echo "--- Sample HB2270 title ---"
-          python3 - <<'PYEOF'
-import json, pathlib, sys
-p = pathlib.Path('.govbot/repos/il-legislation/country:us/state:il/sessions/104th/bills/HB2270/metadata.json')
-if p.exists():
-    d = json.loads(p.read_text())
-    print('title:', d.get('title'))
-    print('subjects:', d.get('subject'))
-else:
-    print('not found')
-PYEOF
       # ─────────────────────────────────────────────────────────────────
       # STEP 2 — Read metadata.json directly from the cloned IL repo.
       #
