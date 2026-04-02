@@ -16,6 +16,7 @@ Two input modes:
 import json
 import os
 import sys
+import re
 import urllib.parse
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
@@ -474,45 +475,69 @@ class OpenStatesParser:
             print(f"⚠️  Error parsing bill: {e}")
             return None
     @staticmethod
-    def scrape_ilga_committee_hearings() -> dict:
-        """Scrape upcoming committee hearings from ILGA's public calendar.
+    def scrape_ilga_bill_hearings() -> dict:
+        """Scrape upcoming bill hearings from ILGA's Schedules/Legislation pages.
 
-        Returns a dict of {committee_name_lower: [hearing_date, ...]} so callers
-        can cross-reference bills assigned to a committee against scheduled dates.
+        Returns a dict of {bill_number_upper: datetime} mapping each bill that
+        has a scheduled committee hearing to its next hearing date/time.
+
+        ILGA publishes two clean tables at:
+          https://ilga.gov/House/Schedules/Legislation
+          https://ilga.gov/Senate/Schedules/Legislation
+
+        Each row contains the bill number, committee name, date, and time —
+        scraped directly so no fuzzy committee-name matching is needed.
         """
         import re
-        hearings = {}
-        for chamber_path in ('house/committees', 'senate/committees'):
-            url = f'https://ilga.gov/{chamber_path}/'
+        bill_hearings = {}  # bill_number -> datetime
+
+        # Matches e.g. "04/07/2026" or "4/7/2026" with optional time "2:00PM"
+        date_re = re.compile(
+            r'(\d{1,2}/\d{1,2}/\d{4})(?:\s+(\d{1,2}:\d{2}\s*[AP]M))?', re.I)
+        # Matches bill identifiers like HB1234, SB567, HR12, SR3
+        bill_re = re.compile(r'\b([HS][BCR]\d+)\b', re.I)
+
+        for chamber in ('House', 'Senate'):
+            url = f'https://ilga.gov/{chamber}/Schedules/Legislation'
             try:
-                resp = requests.get(url, timeout=15,
+                resp = requests.get(url, timeout=20,
                                     headers={'User-Agent': 'govbot-urbanist/1.0'})
                 resp.raise_for_status()
             except Exception as e:
-                print(f'⚠️  Could not fetch ILGA committee page ({url}): {e}')
+                print(f'   ⚠️  Could not fetch {url}: {e}')
                 continue
 
-            # ILGA committee pages list hearings in <td> cells with date text
-            # Pattern: "Thursday, April 3, 2026" near a committee name
-            date_re = re.compile(
-                r'(\w+day,\s+\w+\s+\d{1,2},\s+\d{4})', re.I)
-            committee_re = re.compile(
-                r'Committee on (.+?)(?:</|,|\n)', re.I)
-
-            current_committee = None
-            for line in resp.text.splitlines():
-                cm = committee_re.search(line)
-                if cm:
-                    current_committee = cm.group(1).strip().lower()
-                dm = date_re.search(line)
-                if dm and current_committee:
+            # The page is an HTML table. Walk every line looking for bill IDs
+            # adjacent to a date. ILGA's table has bill number and date in the
+            # same <tr>, so we accumulate context within a small window.
+            lines = resp.text.splitlines()
+            for i, line in enumerate(lines):
+                bm = bill_re.search(line)
+                if not bm:
+                    continue
+                bill_id = bm.group(1).upper()
+                # Look for a date in the same line or the next 5 lines
+                window = ' '.join(lines[i:i+6])
+                dm = date_re.search(window)
+                if not dm:
+                    continue
+                date_str = dm.group(1)
+                time_str = dm.group(2) or '12:00 PM'
+                try:
+                    dt = datetime.strptime(
+                        f'{date_str} {time_str.replace(" ", "")}',
+                        '%m/%d/%Y %I:%M%p'
+                    )
+                except ValueError:
                     try:
-                        d = datetime.strptime(dm.group(1), '%A, %B %d, %Y')
-                        hearings.setdefault(current_committee, []).append(d)
+                        dt = datetime.strptime(date_str, '%m/%d/%Y')
                     except ValueError:
-                        pass
+                        continue
+                # Keep earliest upcoming hearing per bill
+                if bill_id not in bill_hearings or dt < bill_hearings[bill_id]:
+                    bill_hearings[bill_id] = dt
 
-        return hearings
+        return bill_hearings
 
     @staticmethod
     def check_slip_open(ilga_url: str) -> bool:
@@ -1043,27 +1068,24 @@ def main():
 
         # Step 3: cross-reference ILGA hearing calendar
         print('📅 Fetching ILGA committee hearing calendar...')
-        hearings = OpenStatesParser.scrape_ilga_committee_hearings()
-        if hearings:
-            print(f'   Found hearings for {len(hearings)} committees')
+        bill_hearings = OpenStatesParser.scrape_ilga_bill_hearings()
+        if bill_hearings:
+            print(f'   Found {len(bill_hearings)} bills with scheduled hearings')
             hearing_soon = []
-            for b in in_committee:
-                cname = (b.committee_name or '').lower()
-                # Fuzzy match: any word in the committee name appears in hearings dict key
-                matched_key = next(
-                    (k for k in hearings if
-                     any(word in k for word in cname.split() if len(word) > 4)),
-                    None)
-                if matched_key:
-                    upcoming = [d for d in hearings[matched_key] if d >= now]
-                    if upcoming:
-                        b.committee_hearing_date = min(upcoming)
-                        hearing_soon.append(b)
+            for b in topic_matched:
+                norm = re.sub(r'\s+', '', b.bill_number.upper())
+                if norm in bill_hearings:
+                    b.committee_hearing_date = bill_hearings[norm]
+                    hearing_soon.append(b)
+                    print(f'   📅 {b.bill_number}: hearing {b.committee_hearing_date.strftime("%b %-d %I:%M%p")}')
             if hearing_soon:
-                print(f'   ✅ {len(hearing_soon)} bills have hearings on the calendar')
+                print(f'   ✅ {len(hearing_soon)} tracked bills have hearings on the calendar')
+            else:
+                print('   ℹ️  No tracked bills on the hearing schedule right now')
         else:
-            print('   ⚠️  Could not fetch hearing calendar — showing all committee-referred bills')
-            hearing_soon = in_committee
+            print('   ⚠️  Could not fetch hearing calendar — showing all topic-matched bills')
+            hearing_soon = []
+
 
         # Step 4: optionally verify witness slip is actually open on ILGA
         check_slips = os.environ.get('CHECK_SLIP_LIVE', '').lower() in ('1', 'true', 'yes')
@@ -1093,46 +1115,89 @@ def main():
     STANCE_EMOJI = {'Proponent': '👍', 'Opponent': '🚫'}
 
     lines_txt  = []
-    lines_html = ['<html><body>',
-                  '<h2>🚲🚇🏘️ IL Urbanist Bills — Witness Slip Digest</h2>',
-                  '<p><em>All bills below have active ILGA BillStatus pages. ']
-    lines_html += ['Witness slip filing opens when a committee hearing is scheduled.</em></p>']
+    lines_html = [
+        '<html><body style="font-family:sans-serif;max-width:680px;margin:auto;color:#222">',
+        '<h2>🚲🚇🏘️ IL Urbanist Bills — Witness Slip Digest</h2>',
+    ]
+
+    # Split bills: hearing scheduled vs. watchlist
+    with_hearing    = [b for b in actionable if b.committee_hearing_date]
+    without_hearing = [b for b in actionable if not b.committee_hearing_date]
+
+    if with_hearing:
+        lines_html.append('<p style="background:#e6f4ea;padding:10px;border-radius:6px">'
+                          '🔔 <strong>Action needed:</strong> the bills below have '
+                          'committee hearings scheduled. File your witness slip now!</p>')
+    else:
+        lines_html.append('<p><em>No hearings scheduled this week. '
+                          'Bills on the watchlist are shown below.</em></p>')
+
+    def render_bill(b, lines_t, lines_h):
+        slip_url = b.get_witness_slip_url()
+        stance   = getattr(b, 'stance', 'Proponent')
+        emoji    = '👍' if stance == 'Proponent' else '🚫'
+        hearing  = (b.committee_hearing_date.strftime('🗓 Hearing: %b %-d, %Y %I:%M %p')
+                    if b.committee_hearing_date else '')
+        cmt      = f' ({b.committee_name})' if b.committee_name else ''
+        lines_t.append(
+            f'  {emoji} {b.bill_number}: {b.title[:70]}\n'
+            f'     Stance: {stance}{(" | " + hearing) if hearing else ""}\n'
+            f'     Witness slip: {slip_url}'
+        )
+        lines_h.append(
+            f'<li style="margin-bottom:10px">'
+            f'<strong>{b.bill_number}</strong> ({stance}) — {b.title[:80]}'
+            f'{"<br><small>" + hearing + cmt + "</small>" if hearing else ""}'
+            f'<br><a href="{slip_url}">📝 File Witness Slip</a></li>'
+        )
 
     total = 0
-    for cat in CAT_ORDER:
-        cat_bills = by_category.get(cat, [])
-        if not cat_bills:
-            continue
-        lines_txt.append(f'\n{cat.upper()} ({len(cat_bills)} bills)')
+    by_category = defaultdict(list)
+    for b in actionable:
+        cat = b.subjects[0] if b.subjects else 'Other'
+        by_category[cat].append(b)
+
+    # ── Bills WITH hearings — prominent ──────────────────────────────────
+    if with_hearing:
+        lines_txt.append('\n📅 BILLS WITH SCHEDULED HEARINGS')
         lines_txt.append('=' * 50)
-        lines_html.append(f'<h3>{cat} ({len(cat_bills)} bills)</h3><ul>')
-        for b in sorted(cat_bills, key=lambda x: x.bill_number):
-            slip_url  = b.get_witness_slip_url()
-            stance    = getattr(b, 'stance', 'Proponent')
-            emoji     = STANCE_EMOJI.get(stance, '👍')
-            hearing   = (
-                b.committee_hearing_date.strftime(' | Hearing: %b %-d')
-                if b.committee_hearing_date else ' | No hearing scheduled'
-            )
-            lines_txt.append(
-                f'  {emoji} {b.bill_number}: {b.title[:70]}{hearing}\n'  # noqa
-                f'     Stance: {stance} | Witness slip: {slip_url}'
-            )
-            lines_html.append(
-                f'<li><strong>{b.bill_number}</strong> ({stance}) '  # noqa
-                f'— {b.title[:80]}{hearing}<br>'
-                f'<a href="{slip_url}">📝 File Witness Slip</a></li>'
-            )
-            total += 1
-        lines_html.append('</ul>')
+        for cat in CAT_ORDER:
+            cat_bills = [b for b in with_hearing
+                         if (b.subjects[0] if b.subjects else 'Other') == cat]
+            if not cat_bills:
+                continue
+            lines_txt.append(f'\n{cat} ({len(cat_bills)} bills)')
+            lines_html.append(f'<h3>{cat}</h3><ul>')
+            for b in sorted(cat_bills, key=lambda x: x.bill_number):
+                render_bill(b, lines_txt, lines_html)
+                total += 1
+            lines_html.append('</ul>')
+
+    # ── Bills WITHOUT hearings — collapsible ─────────────────────────────
+    if without_hearing:
+        lines_txt.append(f'\n\n👀 WATCHLIST — NO HEARING SCHEDULED ({len(without_hearing)} bills)')
+        lines_txt.append('(These bills are being tracked but have no committee hearing yet)')
+        lines_txt.append('=' * 50)
+        lines_html.append(
+            f'<details style="margin-top:20px"><summary style="cursor:pointer;'
+            f'font-weight:bold;font-size:1.05em">👀 Watchlist — no hearing scheduled '
+            f'({len(without_hearing)} bills) — click to expand</summary>'
+        )
+        for cat in CAT_ORDER:
+            cat_bills = [b for b in without_hearing
+                         if (b.subjects[0] if b.subjects else 'Other') == cat]
+            if not cat_bills:
+                continue
+            lines_txt.append(f'\n{cat} ({len(cat_bills)} bills)')
+            lines_html.append(f'<h4 style="margin-top:14px">{cat}</h4><ul>')
+            for b in sorted(cat_bills, key=lambda x: x.bill_number):
+                render_bill(b, lines_txt, lines_html)
+                total += 1
+            lines_html.append('</ul>')
+        lines_html.append('</details>')
 
     lines_html.append('</body></html>')
-    plain = '\n'.join(lines_txt)
-    html  = '\n'.join(lines_html)
 
-    print(f"✅ Digest ready: {total} bills across {len(by_category)} categories")
-    for cat, cat_bills in sorted(by_category.items()):
-        print(f"   {cat}: {len(cat_bills)} bills")
 
     # ── Write output files ─────────────────────────────────────────────────────────────
     json_output = [
