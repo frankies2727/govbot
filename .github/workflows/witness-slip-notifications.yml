@@ -86,27 +86,36 @@ jobs:
 
       - name: Inspect IL legislation repo
         run: |
-          echo "--- Repo disk usage ---"
-          du -sh .govbot/repos/il-legislation 2>/dev/null || echo "Repo not found"
-          echo "--- Latest 5 commits in il-legislation ---"
-          git -C .govbot/repos/il-legislation log --oneline -5 2>/dev/null || echo "No git log"
-          echo "--- Top-level directory structure ---"
-          ls .govbot/repos/il-legislation/ 2>/dev/null || echo "Empty"
-          echo "--- Sample bills paths (first 20) ---"
-          find .govbot/repos/il-legislation -name 'metadata.json' | head -20 || echo "No metadata files"
-          echo "--- Total metadata.json count ---"
-          find .govbot/repos/il-legislation -name 'metadata.json' | wc -l
+          BASE=.govbot/repos/il-legislation/country:us/state:il/sessions/104th/bills
+          echo "--- Total bills (metadata.json) ---"
+          find $BASE -name 'metadata.json' | wc -l
+          echo "--- Total log event files ---"
+          find $BASE -path '*/logs/*.json' | wc -l
+          echo "--- Sample log files under HB2270 ---"
+          ls $BASE/HB2270/logs/ 2>/dev/null | head -10 || echo "No logs dir"
+          echo "--- HB2270 metadata ---"
+          cat $BASE/HB2270/metadata.json 2>/dev/null | python3 -m json.tool --no-indent 2>/dev/null | head -30
+          echo "--- Bills WITH log entries (first 20) ---"
+          find $BASE -path '*/logs/*.json' -printf '%h\n' | sort -u \
+            | sed "s|$BASE/||;s|/logs||" | head -20
+          echo "--- Most recent log files across all bills ---"
+          find $BASE -path '*/logs/*.json' -printf '%T@ %p\n' \
+            | sort -rn | head -10 | awk '{print $2}'
 
       - name: Tag bills
         run: |
           echo "🏷️  Tagging bills..."
-          echo "--- Log entries from govbot logs ---"
+          echo "--- Raw log line count from govbot logs ---"
           govbot logs --repos il --govbot-dir .govbot | wc -l
+          echo "--- First 5 log lines (raw) ---"
+          govbot logs --repos il --govbot-dir .govbot | head -5
           echo "--- Running tag pipeline ---"
           govbot logs --repos il --govbot-dir .govbot \
             | govbot tag --output-dir . --govbot-dir .govbot
           echo "--- Tagged files produced ---"
-          ls -la *.json 2>/dev/null || echo "No JSON tag files"
+          ls -la *.json 2>/dev/null | head -20 || echo "No JSON tag files"
+          echo "--- Tag file count ---"
+          ls *.json 2>/dev/null | wc -l
 
       - name: Build RSS feed
         id: govbot
