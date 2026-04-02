@@ -7,109 +7,131 @@ repos:
   - il
 
 # ── Urbanist Tags ─────────────────────────────────────────────────────────────
-# tags is a MAP keyed by tag name (not a list).
+# tags is a MAP keyed by tag name (govbot expects this format, not a list).
+#
+# threshold: controls how confident govbot must be before tagging a bill.
+#   Default is 0.5. Higher values (0.7–0.85) prevent false positives like
+#   "TRANSPORTATION-TECH" (a boat registration amendment) matching everything.
+#   Start conservative; loosen if real bills are being missed.
+#
+# include_keywords are matched against title, subjects, and abstract.
+# They must be specific enough to avoid cross-contamination.
 tags:
   Housing:
-    description: Bills related to housing, zoning, affordability, and development
+    description: Bills related to housing supply, zoning reform, affordability, and residential development
+    threshold: 0.72
     include_keywords:
       - housing
       - affordable housing
-      - real estate
+      - accessory dwelling unit
+      - ADU
       - zoning
-      - land use
-      - development
+      - upzoning
+      - mixed-use
+      - multifamily
+      - transit-oriented development
+      - adaptive reuse
+      - parking reform
+      - impact fee
+      - building permit
+      - single stair
+      - faith-based housing
+      - YIGBY
+      - residential development
+      - missing middle
       - rent
       - eviction
-      - ADU
-      - accessory dwelling
-      - upzoning
-      - transit-oriented development
-      - TOD
-      - mixed-use
       - landlord
       - tenant
       - homelessness
-      - shelter
     exclude_keywords:
       - animal shelter
+      - tax increment
 
   Transit:
-    description: Bills related to public transportation including buses, trains, and rail
+    description: Bills related to public transportation—buses, trains, rail, and fare policy
+    threshold: 0.75
     include_keywords:
-      - transit
-      - bus
-      - rail
+      - public transit
+      - bus rapid transit
+      - BRT
+      - transit signal priority
+      - green light for buses
       - CTA
       - Metra
       - Pace
       - RTA
-      - light rail
       - commuter rail
-      - subway
-      - public transportation
-      - GTFS
-      - BRT
-      - bus rapid transit
-      - train
-      - fare
-      - ridership
+      - light rail
+      - transit fare
+      - transit funding
+      - transit-oriented
     exclude_keywords:
       - school bus
+      - prison
+      - corrections
 
   Biking:
-    description: Bills related to cycling infrastructure, bike lanes, and micromobility
+    description: Bills related to cycling infrastructure, bike safety, and micromobility
+    threshold: 0.75
     include_keywords:
       - bicycle
-      - biking
       - bike lane
       - bike path
-      - bike share
-      - Divvy
+      - bike grid
       - cycling
       - cyclist
-      - micromobility
+      - Idaho stop
       - e-bike
       - electric bike
-      - bike infrastructure
+      - bikeshare
+      - Divvy
+      - micromobility
+      - bicycle safety
       - bike parking
     exclude_keywords: []
 
   Safe Streets:
-    description: Bills related to pedestrian safety, traffic calming, and Vision Zero
+    description: Bills related to pedestrian safety, speed limits, traffic calming, and Vision Zero
+    threshold: 0.75
     include_keywords:
-      - pedestrian
+      - pedestrian safety
       - safe streets
       - Vision Zero
       - complete streets
-      - traffic safety
-      - crosswalk
-      - sidewalk
+      - speed camera
       - speed limit
-      - road safety
+      - urban speed limit
       - traffic calming
       - school zone
+      - crosswalk
+      - sidewalk
       - distracted driving
+      - DUI
+      - BAC threshold
       - hit and run
-      - fatality
-      - speeding
+      - quick build
+      - safety infrastructure
     exclude_keywords: []
 
   Transportation:
-    description: Broader transportation bills including roads, highways, and infrastructure
+    description: Broader transportation infrastructure bills—roads, highways, IDOT policy
+    threshold: 0.78
     include_keywords:
-      - transportation
-      - highway
-      - road
-      - infrastructure
       - IDOT
-      - motor vehicle
-      - parking
-      - tollway
-      - expressway
-      - bridge
-      - traffic
-      - congestion
-    exclude_keywords: []
+      - Illinois Department of Transportation
+      - highway safety
+      - road diet
+      - complete streets
+      - transportation funding
+      - infrastructure
+    exclude_keywords:
+      - boat
+      - watercraft
+      - vessel
+      - aviation
+      - airport
+      - railroad
 
 # ── RSS Feed Output ───────────────────────────────────────────────────────────
 build:

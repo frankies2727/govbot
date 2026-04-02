@@ -31,6 +31,34 @@ from email.message import EmailMessage
 
 
 
+# Strong Towns Chicago tracked bills — 104th General Assembly
+# Always included in digest regardless of govbot keyword tagging.
+# Format: normalized_bill_number -> (category, plain_description, stance)
+STC_TRACKED_BILLS = {
+    "HB5626": ("Housing",      "BUILD Act (Omnibus) — House omnibus housing bill",                 "Proponent"),
+    "SB4061": ("Housing",      "BUILD Act — Single stair reform",                                 "Proponent"),
+    "SB4064": ("Housing",      "BUILD Act — Parking reform (caps minimums)",                     "Proponent"),
+    "SB4062": ("Housing",      "BUILD Act — Impact fee modernization",                            "Proponent"),
+    "SB4060": ("Housing",      "BUILD Act — 2–8 units by right (missing middle)",                 "Proponent"),
+    "SB4071": ("Housing",      "BUILD Act — Legalizes ADUs statewide",                           "Proponent"),
+    "SB4063": ("Housing",      "BUILD Act — Third-party review for housing permits",              "Proponent"),
+    "HB5083": ("Housing",      "YIGBY — Faith-based housing & mixed-use by-right",               "Proponent"),
+    "SB3187": ("Housing",      "YIGBY — Faith-based housing & mixed-use by-right",               "Proponent"),
+    "HB4835": ("Housing",      "Adaptive reuse of commercial buildings",                         "Proponent"),
+    "HB5198": ("Housing",      "AHPAA Improvement Act",                                          "Proponent"),
+    "SB3478": ("Biking",       "Bike grid enabling legislation",                                 "Proponent"),
+    "HB2454": ("Biking",       "Adds bicycles as intended users of roadways",                   "Proponent"),
+    "HB4660": ("Biking",       "Idaho Stop — legalizes yield-at-stop for cyclists",              "Proponent"),
+    "HB4925": ("Biking",       "Class 3 e-bike: 18+ to carry passenger under 18",               "Proponent"),
+    "HB2934": ("Safe Streets", "Lowers urban speed limit 30→20 mph / alley 15→10 mph",           "Proponent"),
+    "HB4281": ("Safe Streets", "Speed cameras in Cook County cities 25k+ population",           "Proponent"),
+    "HB4333": ("Safe Streets", "Lowers DUI BAC threshold 0.08% → 0.05%",                        "Proponent"),
+    "HB4759": ("Transit",      "Green Light for Buses — transit signal priority",               "Proponent"),
+    "SB3627": ("Safe Streets", "Quick Build — IDOT must accept quick-build safety infra",       "Proponent"),
+    "HB5081": ("Safe Streets", "REMOVES safety zones when speed limit lowered to 20 mph",       "Opponent"),
+}
+
+
 class BillReading(Enum):
     FIRST = "First Reading"
     SECOND = "Second Reading"
@@ -837,6 +865,96 @@ def main():
                       (b.committee_hearing_date and now <= b.committee_hearing_date <= future) or
                       b.next_reading in [BillReading.FIRST, BillReading.SECOND]]
         print(f"📊 Total: {len(bills)}, actionable: {len(actionable)}")
+
+    # Always include STC tracked bills, merging with any already parsed from feed.
+    import re as _re
+    feed_ids = {b.bill_number for b in actionable}
+    for bill_num, (category, description, stance) in STC_TRACKED_BILLS.items():
+        norm = _re.sub(r'\s+', '', bill_num.upper())
+        if norm not in feed_ids:
+            chamber = Chamber.HOUSE if norm.startswith('H') else Chamber.SENATE
+            num_only = _re.sub(r'[^\d]', '', norm)
+            doc_type = 'HB' if chamber == Chamber.HOUSE else 'SB'
+            ilga_url = (
+                f"https://www.ilga.gov/legislation/BillStatus.asp"
+                f"?DocTypeID={doc_type}&DocNum={num_only}&GAID=18&SessionID=114"
+            )
+            stub = Bill(
+                bill_number=norm, chamber=chamber,
+                title=description, sponsor='Unknown',
+                next_reading=BillReading.FIRST,
+                subjects=[category],
+                ilga_url=ilga_url,
+            )
+            stub.stance = stance
+            actionable.append(stub)
+            feed_ids.add(norm)
+    # Tag stance on feed bills too
+    for b in actionable:
+        if not hasattr(b, 'stance'):
+            info = STC_TRACKED_BILLS.get(b.bill_number)
+            b.stance = info[2] if info else 'Proponent'
+    print(f"📊 Total actionable (feed + STC tracked): {len(actionable)}")
+
+    # Always include STC tracked bills, merging with any already parsed from feed.
+    import re as _re
+    feed_ids = {b.bill_number for b in actionable}
+    for bill_num, (category, description, stance) in STC_TRACKED_BILLS.items():
+        norm = _re.sub(r'\s+', '', bill_num.upper())
+        if norm not in feed_ids:
+            chamber = Chamber.HOUSE if norm.startswith('H') else Chamber.SENATE
+            num_only = _re.sub(r'[^\d]', '', norm)
+            doc_type = 'HB' if chamber == Chamber.HOUSE else 'SB'
+            ilga_url = (
+                f"https://www.ilga.gov/legislation/BillStatus.asp"
+                f"?DocTypeID={doc_type}&DocNum={num_only}&GAID=18&SessionID=114"
+            )
+            stub = Bill(
+                bill_number=norm, chamber=chamber,
+                title=description, sponsor='Unknown',
+                next_reading=BillReading.FIRST,
+                subjects=[category],
+                ilga_url=ilga_url,
+            )
+            stub.stance = stance
+            actionable.append(stub)
+            feed_ids.add(norm)
+    # Tag stance on feed bills too
+    for b in actionable:
+        if not hasattr(b, 'stance'):
+            info = STC_TRACKED_BILLS.get(b.bill_number)
+            b.stance = info[2] if info else 'Proponent'
+    print(f"📊 Total actionable (feed + STC tracked): {len(actionable)}")
+
+    # Always include STC tracked bills, merging with any already parsed from feed.
+    import re as _re
+    feed_ids = {b.bill_number for b in actionable}
+    for bill_num, (category, description, stance) in STC_TRACKED_BILLS.items():
+        norm = _re.sub(r'\s+', '', bill_num.upper())
+        if norm not in feed_ids:
+            chamber = Chamber.HOUSE if norm.startswith('H') else Chamber.SENATE
+            num_only = _re.sub(r'[^\d]', '', norm)
+            doc_type = 'HB' if chamber == Chamber.HOUSE else 'SB'
+            ilga_url = (
+                f"https://www.ilga.gov/legislation/BillStatus.asp"
+                f"?DocTypeID={doc_type}&DocNum={num_only}&GAID=18&SessionID=114"
+            )
+            stub = Bill(
+                bill_number=norm, chamber=chamber,
+                title=description, sponsor='Unknown',
+                next_reading=BillReading.FIRST,
+                subjects=[category],
+                ilga_url=ilga_url,
+            )
+            stub.stance = stance
+            actionable.append(stub)
+            feed_ids.add(norm)
+    # Tag stance on feed bills too
+    for b in actionable:
+        if not hasattr(b, 'stance'):
+            info = STC_TRACKED_BILLS.get(b.bill_number)
+            b.stance = info[2] if info else 'Proponent'
+    print(f"📊 Total actionable (feed + STC tracked): {len(actionable)}")
     
     if not actionable:
         print("✅ No actionable bills.")
