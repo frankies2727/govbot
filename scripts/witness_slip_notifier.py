@@ -387,8 +387,17 @@ class OpenStatesParser:
                 return None
             
             # Chamber
-            chamber_str = bill_data.get('from_organization', {}).get('classification', '')
-            if 'upper' in chamber_str.lower() or 'senate' in chamber_str.lower():
+            # from_organization is either a dict {classification: ...} or
+            # an OpenStates lazy-ref string like '~{"classification": "lower"}'.
+            # We also fall back to the bill identifier prefix (HB/SB).
+            from_org = bill_data.get('from_organization', {})
+            if isinstance(from_org, str):
+                chamber_str = from_org  # the string itself contains 'upper'/'lower'
+            elif isinstance(from_org, dict):
+                chamber_str = from_org.get('classification', '')
+            else:
+                chamber_str = ''
+            if 'upper' in chamber_str.lower() or 'senate' in chamber_str.lower() or str(identifier).upper().startswith('S'):
                 chamber = Chamber.SENATE
             else:
                 chamber = Chamber.HOUSE
