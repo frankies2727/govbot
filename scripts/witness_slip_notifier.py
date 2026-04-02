@@ -1198,6 +1198,12 @@ def main():
 
     lines_html.append('</body></html>')
 
+    plain = '\n'.join(lines_txt)
+    html  = '\n'.join(lines_html)
+
+    print(f"\u2705 Digest ready: {total} bills across {len(by_category)} categories")
+    for cat, cat_bills in sorted(by_category.items()):
+        print(f"   {cat}: {len(cat_bills)} bills")
 
     # ── Write output files ─────────────────────────────────────────────────────────────
     json_output = [
@@ -1211,7 +1217,7 @@ def main():
              b.committee_hearing_date.isoformat()
              if b.committee_hearing_date else None),
          'committee_name': b.committee_name,
-         'source': 'stc_tracked' if b.bill_number in {_re.sub(r'\s+','',k.upper()) for k in STC_TRACKED_BILLS} else 'feed',
+         'source': 'stc_tracked' if b.bill_number in {re.sub(r'\s+','',k.upper()) for k in STC_TRACKED_BILLS} else 'feed',
         }
         for b in actionable
     ]
