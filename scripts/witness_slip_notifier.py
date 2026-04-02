@@ -881,196 +881,151 @@ def main():
         print(f"📂 Input mode: raw data directory ({args.data_dir})")
         bills = OpenStatesParser.parse_data_directory(args.data_dir)
     
+
+    # ── Merge STC tracked bills first (before any early-exit) ─────────────────────
+    # This ensures tracked bills always appear in the digest even when the
+    # govbot feed is stale, empty, or contains only amendment/appointment items.
+    import re as _re
+    feed_ids = {b.bill_number for b in bills}
+    stc_added = 0
+    for bill_num, (category, stc_desc, stance) in STC_TRACKED_BILLS.items():
+        norm = _re.sub(r'\s+', '', bill_num.upper())
+        if norm not in feed_ids:
+            _chamber = Chamber.HOUSE if norm.startswith('H') else Chamber.SENATE
+            _num     = _re.sub(r'[^\d]', '', norm)
+            _dt      = 'HB' if _chamber == Chamber.HOUSE else 'SB'
+            stub = Bill(
+                bill_number=norm, chamber=_chamber,
+                title=stc_desc, sponsor='Unknown',
+                next_reading=BillReading.FIRST,
+                subjects=[category],
+                ilga_url=(
+                    f"https://www.ilga.gov/legislation/BillStatus.asp"
+                    f"?DocTypeID={_dt}&DocNum={_num}&GAID=18&SessionID=114"
+                ),
+            )
+            stub.stance = stance
+            bills.append(stub)
+            feed_ids.add(norm)
+            stc_added += 1
+
+    # Tag stance on all bills (feed bills that match STC list get their stance too)
+    for b in bills:
+        if not hasattr(b, 'stance'):
+            info = STC_TRACKED_BILLS.get(b.bill_number)
+            b.stance = info[2] if info else 'Proponent'
+
+    feed_bills = len(bills) - stc_added
+    print(f"📊 Feed bills parsed: {feed_bills} | STC stubs added: {stc_added} | Total: {len(bills)}")
+
     if not bills:
-        print("✅ No bills found in data directory.")
+        msg = "No bills found and no tracked bills configured."
+        print(f"⚠️  {msg}")
         if args.mode == 'github-action':
-            Path('notifications_output.txt').write_text("No bills found.\n")
-            Path('notifications_output.html').write_text("<p>No bills found.</p>")
-            Path('witness_slip_notifications.json').write_text("[]")
+            Path('notifications_output.txt').write_text(msg + '\n')
+            Path('notifications_output.html').write_text(f'<p>{msg}</p>')
+            Path('witness_slip_notifications.json').write_text('[]')
         sys.exit(0)
-    
-    # Filter actionable bills.
-    # In --feed mode, govbot feed has no future hearing dates, so include
-    # all tagged bills and let topic routing do the filtering.
+
+    # ── Build actionable list ─────────────────────────────────────────────────────────
+    # In feed mode: include all bills with at least one tag (STC stubs always
+    # have a tag so they're always included). In data-dir mode: use date window.
     now = datetime.now()
     if args.feed:
         actionable = [b for b in bills if b.subjects]
-        print(f"📊 Bills in feed: {len(bills)}, tagged: {len(actionable)}")
-        for b in actionable[:5]:
-            print(f"   • {b.bill_number}: {b.title[:55]} [{', '.join(b.subjects)}]")
-        if len(actionable) > 5:
-            print(f"   ... and {len(actionable)-5} more")
     else:
         future = now + timedelta(days=30)
         actionable = [b for b in bills if
                       (b.committee_hearing_date and now <= b.committee_hearing_date <= future) or
                       b.next_reading in [BillReading.FIRST, BillReading.SECOND]]
-        print(f"📊 Total: {len(bills)}, actionable: {len(actionable)}")
-
-    # Always include STC tracked bills, merging with any already parsed from feed.
-    import re as _re
-    feed_ids = {b.bill_number for b in actionable}
-    for bill_num, (category, description, stance) in STC_TRACKED_BILLS.items():
-        norm = _re.sub(r'\s+', '', bill_num.upper())
-        if norm not in feed_ids:
-            chamber = Chamber.HOUSE if norm.startswith('H') else Chamber.SENATE
-            num_only = _re.sub(r'[^\d]', '', norm)
-            doc_type = 'HB' if chamber == Chamber.HOUSE else 'SB'
-            ilga_url = (
-                f"https://www.ilga.gov/legislation/BillStatus.asp"
-                f"?DocTypeID={doc_type}&DocNum={num_only}&GAID=18&SessionID=114"
-            )
-            stub = Bill(
-                bill_number=norm, chamber=chamber,
-                title=description, sponsor='Unknown',
-                next_reading=BillReading.FIRST,
-                subjects=[category],
-                ilga_url=ilga_url,
-            )
-            stub.stance = stance
-            actionable.append(stub)
-            feed_ids.add(norm)
-    # Tag stance on feed bills too
-    for b in actionable:
-        if not hasattr(b, 'stance'):
-            info = STC_TRACKED_BILLS.get(b.bill_number)
-            b.stance = info[2] if info else 'Proponent'
-    print(f"📊 Total actionable (feed + STC tracked): {len(actionable)}")
-
-    # Always include STC tracked bills, merging with any already parsed from feed.
-    import re as _re
-    feed_ids = {b.bill_number for b in actionable}
-    for bill_num, (category, description, stance) in STC_TRACKED_BILLS.items():
-        norm = _re.sub(r'\s+', '', bill_num.upper())
-        if norm not in feed_ids:
-            chamber = Chamber.HOUSE if norm.startswith('H') else Chamber.SENATE
-            num_only = _re.sub(r'[^\d]', '', norm)
-            doc_type = 'HB' if chamber == Chamber.HOUSE else 'SB'
-            ilga_url = (
-                f"https://www.ilga.gov/legislation/BillStatus.asp"
-                f"?DocTypeID={doc_type}&DocNum={num_only}&GAID=18&SessionID=114"
-            )
-            stub = Bill(
-                bill_number=norm, chamber=chamber,
-                title=description, sponsor='Unknown',
-                next_reading=BillReading.FIRST,
-                subjects=[category],
-                ilga_url=ilga_url,
-            )
-            stub.stance = stance
-            actionable.append(stub)
-            feed_ids.add(norm)
-    # Tag stance on feed bills too
-    for b in actionable:
-        if not hasattr(b, 'stance'):
-            info = STC_TRACKED_BILLS.get(b.bill_number)
-            b.stance = info[2] if info else 'Proponent'
-    print(f"📊 Total actionable (feed + STC tracked): {len(actionable)}")
-
-    # Always include STC tracked bills, merging with any already parsed from feed.
-    import re as _re
-    feed_ids = {b.bill_number for b in actionable}
-    for bill_num, (category, description, stance) in STC_TRACKED_BILLS.items():
-        norm = _re.sub(r'\s+', '', bill_num.upper())
-        if norm not in feed_ids:
-            chamber = Chamber.HOUSE if norm.startswith('H') else Chamber.SENATE
-            num_only = _re.sub(r'[^\d]', '', norm)
-            doc_type = 'HB' if chamber == Chamber.HOUSE else 'SB'
-            ilga_url = (
-                f"https://www.ilga.gov/legislation/BillStatus.asp"
-                f"?DocTypeID={doc_type}&DocNum={num_only}&GAID=18&SessionID=114"
-            )
-            stub = Bill(
-                bill_number=norm, chamber=chamber,
-                title=description, sponsor='Unknown',
-                next_reading=BillReading.FIRST,
-                subjects=[category],
-                ilga_url=ilga_url,
-            )
-            stub.stance = stance
-            actionable.append(stub)
-            feed_ids.add(norm)
-    # Tag stance on feed bills too
-    for b in actionable:
-        if not hasattr(b, 'stance'):
-            info = STC_TRACKED_BILLS.get(b.bill_number)
-            b.stance = info[2] if info else 'Proponent'
-    print(f"📊 Total actionable (feed + STC tracked): {len(actionable)}")
-    
-    # Always include STC tracked bills as stubs (even when feed is stale/empty)
-    import re as _re
-    feed_ids = {b.bill_number for b in actionable}
-    stc_added = 0
-    for bill_num, (category, description, stance) in STC_TRACKED_BILLS.items():
-        norm = _re.sub(r'\s+', '', bill_num.upper())
-        if norm not in feed_ids:
-            chamber = Chamber.HOUSE if norm.startswith('H') else Chamber.SENATE
-            num_only = _re.sub(r'[^\d]', '', norm)
-            doc_type = 'HB' if chamber == Chamber.HOUSE else 'SB'
-            stub = Bill(
-                bill_number=norm, chamber=chamber,
-                title=description, sponsor='Unknown',
-                next_reading=BillReading.FIRST,
-                subjects=[category],
-                ilga_url=(
-                    f"https://www.ilga.gov/legislation/BillStatus.asp"
-                    f"?DocTypeID={doc_type}&DocNum={num_only}&GAID=18&SessionID=114"
-                ),
-            )
-            stub.stance = stance
-            actionable.append(stub)
-            feed_ids.add(norm)
-            stc_added += 1
-    # Tag stance on any feed bills that are also in STC list
-    for b in actionable:
-        if not hasattr(b, 'stance'):
-            info = STC_TRACKED_BILLS.get(b.bill_number)
-            b.stance = info[2] if info else 'Proponent'
-    print(f"📊 Feed bills: {len(actionable)-stc_added}, STC stubs added: {stc_added}, total: {len(actionable)}")
 
     if not actionable:
-        print("✅ No actionable bills.")
+        msg = "No actionable bills (no tagged bills in feed and STC list is empty)."
+        print(f"⚠️  {msg}")
         if args.mode == 'github-action':
-            Path('notifications_output.txt').write_text("No actionable bills.\n")
-            Path('notifications_output.html').write_text("<p>No actionable bills.</p>")
-            Path('witness_slip_notifications.json').write_text("[]")
+            Path('notifications_output.txt').write_text(msg + '\n')
+            Path('notifications_output.html').write_text(f'<p>{msg}</p>')
+            Path('witness_slip_notifications.json').write_text('[]')
         sys.exit(0)
-    
-    # Generate notifications
-    generator = NotificationGenerator(config)
-    plain, html = generator.generate_notifications(actionable)
-    json_output = generator.generate_json(actionable)
-    
-    if not json_output:
-        print("✅ No bills matched subscriptions.")
-        if args.mode == 'github-action':
-            Path('notifications_output.txt').write_text("No matches.\n")
-            Path('notifications_output.html').write_text("<p>No matches.</p>")
-            Path('witness_slip_notifications.json').write_text("[]")
-        sys.exit(0)
-    
-    print(f"✅ Matched {len(json_output)} bills\n")
-    
+
+    # ── Group by category for display ───────────────────────────────────────────────
+    from collections import defaultdict
+    by_category = defaultdict(list)
+    for b in actionable:
+        cat = b.subjects[0] if b.subjects else 'Other'
+        by_category[cat].append(b)
+
+    CAT_ORDER = ['Housing', 'Biking', 'Safe Streets', 'Transit', 'Transportation', 'Other']
+    STANCE_EMOJI = {'Proponent': '👍', 'Opponent': '🚫'}
+
+    lines_txt  = []
+    lines_html = ['<html><body>',
+                  '<h2>🚲🚇🏘️ IL Urbanist Bills — Witness Slip Digest</h2>',
+                  '<p><em>All bills below have active ILGA BillStatus pages. ']
+    lines_html += ['Witness slip filing opens when a committee hearing is scheduled.</em></p>']
+
+    total = 0
+    for cat in CAT_ORDER:
+        cat_bills = by_category.get(cat, [])
+        if not cat_bills:
+            continue
+        lines_txt.append(f'\n{cat.upper()} ({len(cat_bills)} bills)')
+        lines_txt.append('=' * 50)
+        lines_html.append(f'<h3>{cat} ({len(cat_bills)} bills)</h3><ul>')
+        for b in sorted(cat_bills, key=lambda x: x.bill_number):
+            slip_url  = b.get_witness_slip_url()
+            stance    = getattr(b, 'stance', 'Proponent')
+            emoji     = STANCE_EMOJI.get(stance, '👍')
+            hearing   = (
+                b.committee_hearing_date.strftime(' | Hearing: %b %-d')
+                if b.committee_hearing_date else ' | No hearing scheduled'
+            )
+            lines_txt.append(
+                f'  {emoji} {b.bill_number}: {b.title[:70]}{hearing}\n'  # noqa
+                f'     Stance: {stance} | Witness slip: {slip_url}'
+            )
+            lines_html.append(
+                f'<li><strong>{b.bill_number}</strong> ({stance}) '  # noqa
+                f'— {b.title[:80]}{hearing}<br>'
+                f'<a href="{slip_url}">📝 File Witness Slip</a></li>'
+            )
+            total += 1
+        lines_html.append('</ul>')
+
+    lines_html.append('</body></html>')
+    plain = '\n'.join(lines_txt)
+    html  = '\n'.join(lines_html)
+
+    print(f"✅ Digest ready: {total} bills across {len(by_category)} categories")
+    for cat, cat_bills in sorted(by_category.items()):
+        print(f"   {cat}: {len(cat_bills)} bills")
+
+    # ── Write output files ─────────────────────────────────────────────────────────────
+    json_output = [
+        {'bill_number': b.bill_number,
+         'chamber': b.chamber.value,
+         'title': b.title,
+         'category': b.subjects[0] if b.subjects else 'Other',
+         'stance': getattr(b, 'stance', 'Proponent'),
+         'witness_slip_url': b.get_witness_slip_url(),
+         'committee_hearing_date': (
+             b.committee_hearing_date.isoformat()
+             if b.committee_hearing_date else None),
+         'committee_name': b.committee_name,
+         'source': 'stc_tracked' if b.bill_number in {_re.sub(r'\s+','',k.upper()) for k in STC_TRACKED_BILLS} else 'feed',
+        }
+        for b in actionable
+    ]
+
     if args.mode == 'github-action':
         Path('notifications_output.txt').write_text(plain)
         Path('notifications_output.html').write_text(html)
-        Path('witness_slip_notifications.json').write_text(json.dumps(json_output, indent=2))
-        print("✅ Generated notification files")
+        Path('witness_slip_notifications.json').write_text(
+            json.dumps(json_output, indent=2, ensure_ascii=False)
+        )
+        print("✅ Output files written")
     else:
         print(plain)
-        # combine all configured recipients across every category
-        all_recipients = list({
-            r
-            for key in ('transportation', 'transit', 'biking', 'safe_streets', 'housing')
-            for r in config['subscriptions'].get(key, {}).get('recipients', [])
-        } | set(config['subscriptions'].get('all_recipients', [])))
-        send_email(
-            subject="IL Witness Slip Alerts – Urbanist Bills",
-            plain_body=plain,
-            html_body=html,
-            recipients=all_recipients,
-        )
-
 
 
 if __name__ == "__main__":
