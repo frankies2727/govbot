@@ -110,8 +110,6 @@ jobs:
 
       - name: Generate witness slip notifications
         env:
-          # Path to the RSS feed govbot just produced
-          FEED_PATH: ${{ steps.govbot.outputs.feed-path }}
 
           # ── User identity for any pre-filled witness slip forms ───────────
           USER_NAME: ${{ secrets.WITNESS_SLIP_USER_NAME }}
