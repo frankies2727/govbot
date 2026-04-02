@@ -47,7 +47,7 @@ jobs:
       # ─────────────────────────────────────────────────────────────────
       - name: Run govbot (clone → tag → RSS)
         id: govbot
-        uses: chihacknight/govbot@main
+        uses: chihacknight/govbot/actions/govbot@main
         with:
           # Filter the feed to only the five urbanist tags defined in govbot.yml
           tags: Housing,Transit,Biking,Safe Streets,Transportation
