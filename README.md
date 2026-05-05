@@ -5,6 +5,9 @@
 
 # 🏛️ govbot
 
+- Download the legislation of 47 states/jurisdicitions in under 1 minute.
+- Tag/Summarize bills with with private/local models optimized to run on free Github Actions.
+
 `govbot` enables distributed data anaylsis of government updates via a friendly terminal interface. Git repos function as datasets, including the legislation of all 47 states/jurisdictions.
 
 ## Quick Start
