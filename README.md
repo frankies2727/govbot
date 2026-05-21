@@ -61,7 +61,7 @@ govbot --help              # see all commands and options
 
 # 🏛️ Govbot Legislation Data Catalogs
 
-See the data catalogs [here](github.com/govbot-data).
+See the data catalogs [here](//github.com/govbot-data).
 
 - Nearly all state governments
 - Federal
