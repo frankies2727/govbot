@@ -94,9 +94,8 @@ impl LockFile {
         if !path.is_file() {
             return Ok(LockFile::default());
         }
-        let contents = std::fs::read_to_string(&path).map_err(|e| {
-            Error::Config(format!("Failed to read {}: {}", path.display(), e))
-        })?;
+        let contents = std::fs::read_to_string(&path)
+            .map_err(|e| Error::Config(format!("Failed to read {}: {}", path.display(), e)))?;
         serde_json::from_str(&contents)
             .map_err(|e| Error::Config(format!("Invalid {}: {}", path.display(), e)))
     }
@@ -130,9 +129,8 @@ impl LockFile {
         let path = LockFile::path_for(project_dir);
         let json = serde_json::to_string_pretty(self)
             .map_err(|e| Error::Config(format!("Failed to serialize lockfile: {}", e)))?;
-        std::fs::write(&path, format!("{}\n", json)).map_err(|e| {
-            Error::Config(format!("Failed to write {}: {}", path.display(), e))
-        })?;
+        std::fs::write(&path, format!("{}\n", json))
+            .map_err(|e| Error::Config(format!("Failed to write {}: {}", path.display(), e)))?;
         Ok(())
     }
 }

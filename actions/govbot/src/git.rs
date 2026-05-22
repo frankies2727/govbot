@@ -131,46 +131,45 @@ pub fn clone_or_pull_dataset(
 
     let mut is_reclone = false;
 
-    let outcome_action: &'static str = if cache_entry.exists()
-        && Repository::open(&cache_entry).is_ok()
-    {
-        // Cached already — pull deltas.
-        let repo = Repository::open(&cache_entry)
-            .map_err(|e| Error::Config(format!("Failed to open cached repository: {}", e)))?;
-        match pull_repo_internal(&repo, token, quiet) {
-            Ok(had_updates) => {
-                drop(repo);
-                std::thread::sleep(std::time::Duration::from_millis(50));
-                if had_updates {
-                    "pulled"
-                } else {
-                    "no_updates"
-                }
-            }
-            Err(e) => {
-                let error_msg = e.to_string();
-                if error_msg.contains("Failed to analyze merge")
-                    || error_msg.contains("object not found")
-                {
+    let outcome_action: &'static str =
+        if cache_entry.exists() && Repository::open(&cache_entry).is_ok() {
+            // Cached already — pull deltas.
+            let repo = Repository::open(&cache_entry)
+                .map_err(|e| Error::Config(format!("Failed to open cached repository: {}", e)))?;
+            match pull_repo_internal(&repo, token, quiet) {
+                Ok(had_updates) => {
                     drop(repo);
-                    if !quiet {
-                        eprintln!("Merge analysis failed, deleting and recloning {}...", short);
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                    if had_updates {
+                        "pulled"
+                    } else {
+                        "no_updates"
                     }
-                    remove_dir_all_robust(&cache_entry).map_err(|e| {
-                        Error::Config(format!("Failed to clear corrupt cache entry: {}", e))
-                    })?;
-                    is_reclone = true;
-                    // fall through to clone
-                    ""
-                } else {
-                    drop(repo);
-                    return Err(e);
+                }
+                Err(e) => {
+                    let error_msg = e.to_string();
+                    if error_msg.contains("Failed to analyze merge")
+                        || error_msg.contains("object not found")
+                    {
+                        drop(repo);
+                        if !quiet {
+                            eprintln!("Merge analysis failed, deleting and recloning {}...", short);
+                        }
+                        remove_dir_all_robust(&cache_entry).map_err(|e| {
+                            Error::Config(format!("Failed to clear corrupt cache entry: {}", e))
+                        })?;
+                        is_reclone = true;
+                        // fall through to clone
+                        ""
+                    } else {
+                        drop(repo);
+                        return Err(e);
+                    }
                 }
             }
-        }
-    } else {
-        ""
-    };
+        } else {
+            ""
+        };
 
     // If the cache entry is populated and we already pulled, we are done with
     // the heavy step — just link and report.
@@ -207,9 +206,9 @@ pub fn clone_or_pull_dataset(
         builder.branch(channel);
     }
 
-    builder.clone(git_url, &cache_entry).map_err(|e| {
-        Error::Config(format!("Failed to clone dataset {}: {}", dataset.id, e))
-    })?;
+    builder
+        .clone(git_url, &cache_entry)
+        .map_err(|e| Error::Config(format!("Failed to clone dataset {}: {}", dataset.id, e)))?;
 
     let repo = Repository::open(&cache_entry)
         .map_err(|e| Error::Config(format!("Failed to open cloned repository: {}", e)))?;
@@ -247,39 +246,38 @@ fn link_dataset(cache_entry: &Path, repos_dir: &Path, short_name: &str) -> Resul
 
 /// Ensure a freshly cloned repo's HEAD points at `main` or `master`.
 fn ensure_default_branch(repo: &Repository) -> Result<()> {
-    let default_branch = if repo.find_branch("main", git2::BranchType::Local).is_ok() {
-        "main"
-    } else if repo.find_branch("master", git2::BranchType::Local).is_ok() {
-        "master"
-    } else if repo
-        .find_branch("origin/main", git2::BranchType::Remote)
-        .is_ok()
-    {
-        let remote_branch = repo.find_branch("origin/main", git2::BranchType::Remote)?;
-        let commit = remote_branch
-            .get()
-            .target()
-            .ok_or_else(|| Error::Config("Failed to get commit from origin/main".to_string()))?;
-        let commit_obj = repo.find_commit(commit)?;
-        repo.branch("main", &commit_obj, false)?;
-        "main"
-    } else if repo
-        .find_branch("origin/master", git2::BranchType::Remote)
-        .is_ok()
-    {
-        let remote_branch = repo.find_branch("origin/master", git2::BranchType::Remote)?;
-        let commit = remote_branch
-            .get()
-            .target()
-            .ok_or_else(|| Error::Config("Failed to get commit from origin/master".to_string()))?;
-        let commit_obj = repo.find_commit(commit)?;
-        repo.branch("master", &commit_obj, false)?;
-        "master"
-    } else {
-        return Err(Error::Config(
-            "Neither 'main' nor 'master' branch found in repository".to_string(),
-        ));
-    };
+    let default_branch =
+        if repo.find_branch("main", git2::BranchType::Local).is_ok() {
+            "main"
+        } else if repo.find_branch("master", git2::BranchType::Local).is_ok() {
+            "master"
+        } else if repo
+            .find_branch("origin/main", git2::BranchType::Remote)
+            .is_ok()
+        {
+            let remote_branch = repo.find_branch("origin/main", git2::BranchType::Remote)?;
+            let commit = remote_branch.get().target().ok_or_else(|| {
+                Error::Config("Failed to get commit from origin/main".to_string())
+            })?;
+            let commit_obj = repo.find_commit(commit)?;
+            repo.branch("main", &commit_obj, false)?;
+            "main"
+        } else if repo
+            .find_branch("origin/master", git2::BranchType::Remote)
+            .is_ok()
+        {
+            let remote_branch = repo.find_branch("origin/master", git2::BranchType::Remote)?;
+            let commit = remote_branch.get().target().ok_or_else(|| {
+                Error::Config("Failed to get commit from origin/master".to_string())
+            })?;
+            let commit_obj = repo.find_commit(commit)?;
+            repo.branch("master", &commit_obj, false)?;
+            "master"
+        } else {
+            return Err(Error::Config(
+                "Neither 'main' nor 'master' branch found in repository".to_string(),
+            ));
+        };
 
     let needs_set = match repo.head() {
         Ok(head) => head.name() != Some(&format!("refs/heads/{}", default_branch)[..]),
@@ -287,7 +285,9 @@ fn ensure_default_branch(repo: &Repository) -> Result<()> {
     };
     if needs_set {
         repo.set_head(&format!("refs/heads/{}", default_branch))
-            .map_err(|e| Error::Config(format!("Failed to set HEAD to {}: {}", default_branch, e)))?;
+            .map_err(|e| {
+                Error::Config(format!("Failed to set HEAD to {}: {}", default_branch, e))
+            })?;
         repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))
             .map_err(|e| Error::Config(format!("Failed to checkout {}: {}", default_branch, e)))?;
     }
@@ -327,10 +327,7 @@ fn pull_repo_internal(repo: &Repository, token: Option<&str>, quiet: bool) -> Re
     }
 
     // Fetch the current branch plus the usual defaults.
-    let branch_refspec = format!(
-        "refs/heads/{0}:refs/remotes/origin/{0}",
-        local_branch_name
-    );
+    let branch_refspec = format!("refs/heads/{0}:refs/remotes/origin/{0}", local_branch_name);
     let refspecs = vec![
         branch_refspec.as_str(),
         "refs/heads/main:refs/remotes/origin/main",
@@ -641,10 +638,7 @@ pub fn delete_dataset(short_name: &str, repos_dir: &Path) -> Result<()> {
     if let Ok(meta) = std::fs::symlink_metadata(&target_dir) {
         if meta.file_type().is_symlink() {
             return std::fs::remove_file(&target_dir).map_err(|e| {
-                Error::Config(format!(
-                    "Failed to unlink dataset {}: {}",
-                    short_name, e
-                ))
+                Error::Config(format!("Failed to unlink dataset {}: {}", short_name, e))
             });
         }
     }

@@ -4,7 +4,7 @@
 // to make the output more focused on important legislative actions.
 //
 // TO UPDATE THIS FILTER:
-// 1. Run: `just govbot logs --repos=az --limit=100` to see recent log entries
+// 1. Run: `just govbot source --repos=az --limit=100` to see recent log entries
 // 2. Analyze the output to identify patterns that are routine/noteworthy but not important:
 //    - Routine actions: committee referrals, first readings, filings, prefiling, status updates
 //    - Important actions: passage votes, executive signatures, amendments, failures, committee reports with substance
@@ -15,14 +15,14 @@
 //    - Check `classification` array for routine classifications
 //    - Check `description` string for routine text patterns (use `starts_with()`, `contains()`, or exact match)
 //    - Return `FilterResult::FilterOut` for routine entries, `FilterResult::Keep` for important ones
-// 5. Test your changes: `just govbot logs --repos=az --limit=100 --filter=default`
+// 5. Test your changes: `just govbot source --repos=az --limit=100 --filter=default`
 //
 // Current filter: No test data available - placeholder filter
 // ======================================
 
 // Filter for az-legislation (Arizona)
 // Note: Repository not found in test data - keeping default filter for now
-// TODO: Analyze output from `just govbot logs --repos=az --limit=100` when data is available
+// TODO: Analyze output from `just govbot source --repos=az --limit=100` when data is available
 
 use crate::filter::FilterResult;
 use serde_json::Value;

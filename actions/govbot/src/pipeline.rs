@@ -17,8 +17,7 @@ use std::process::{Command, Stdio};
 /// Smart update behavior: if `<govbot_dir>/repos/` already has datasets, just
 /// `git pull`; otherwise clone the manifest's `datasets`.
 pub fn run_pipeline(config_path: &Path, govbot_dir: Option<&str>) -> Result<()> {
-    let govbot_bin = std::env::current_exe()
-        .context("Failed to determine govbot binary path")?;
+    let govbot_bin = std::env::current_exe().context("Failed to determine govbot binary path")?;
 
     let cwd = config_path.parent().unwrap_or_else(|| Path::new("."));
 
@@ -32,9 +31,7 @@ pub fn run_pipeline(config_path: &Path, govbot_dir: Option<&str>) -> Result<()> 
     // Fast-fail if a transform's binary cannot be resolved.
     let resolved: Vec<(String, ResolvedTransform)> = transforms
         .iter()
-        .map(|(name, t)| {
-            resolve_transform(t).map(|r| (name.clone(), r))
-        })
+        .map(|(name, t)| resolve_transform(t).map(|r| (name.clone(), r)))
         .collect::<Result<_>>()?;
 
     // Resolve the repos directory the way subcommands do.
@@ -162,7 +159,11 @@ fn resolve_pipeline_transforms(manifest: &Manifest) -> Result<Vec<(String, Trans
     Ok(vec![(
         "classify".to_string(),
         Transform {
-            command: Command_::Argv(vec!["fastclass".to_string(), "classify".to_string(), "-".to_string()]),
+            command: Command_::Argv(vec![
+                "fastclass".to_string(),
+                "classify".to_string(),
+                "-".to_string(),
+            ]),
             reads: "docs".to_string(),
             writes: "classification".to_string(),
             classifier: Some(".".to_string()),
@@ -187,9 +188,7 @@ struct ResolvedTransform {
 /// explicit argument — NOT hard-coded to the cwd.
 fn resolve_transform(t: &Transform) -> Result<ResolvedTransform> {
     let argv = t.command.argv();
-    let (bin_name, rest) = argv
-        .split_first()
-        .context("transform `command` is empty")?;
+    let (bin_name, rest) = argv.split_first().context("transform `command` is empty")?;
 
     let bin = resolve_transform_binary(bin_name).ok_or_else(|| {
         anyhow::anyhow!(
@@ -324,7 +323,9 @@ fn run_transform_dag(
         statuses.insert(name.clone(), status.success());
         all_ok &= status.success();
     }
-    let source_status = source_child.wait().context("Failed to wait for govbot source")?;
+    let source_status = source_child
+        .wait()
+        .context("Failed to wait for govbot source")?;
     all_ok &= source_status.success();
 
     Ok(all_ok)

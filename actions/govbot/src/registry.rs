@@ -272,7 +272,10 @@ mod tests {
     #[test]
     fn bundled_registry_parses_and_has_seed_jurisdictions() {
         let reg = Registry::bundled().expect("bundled registry must parse");
-        assert!(reg.datasets.len() >= 52, "expected the 52-jurisdiction seed");
+        assert!(
+            reg.datasets.len() >= 52,
+            "expected the 52-jurisdiction seed"
+        );
         assert!(reg.datasets.contains_key("us-legislation/wy"));
     }
 

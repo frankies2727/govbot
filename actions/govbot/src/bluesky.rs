@@ -97,7 +97,12 @@ pub fn run_bluesky(job: &PublishJob, dry_run: bool) -> Result<()> {
             pending.len(),
         );
         for (i, post) in pending.iter().enumerate() {
-            println!("--- post {} of {} (id: {}) ---", i + 1, pending.len(), post.id);
+            println!(
+                "--- post {} of {} (id: {}) ---",
+                i + 1,
+                pending.len(),
+                post.id
+            );
             println!("{}", post.text);
             println!();
         }
@@ -118,12 +123,14 @@ pub fn run_bluesky(job: &PublishJob, dry_run: bool) -> Result<()> {
         .ok()
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| DEFAULT_SERVICE.to_string());
-    let session = create_session(&service)
-        .context("Bluesky authentication failed")?;
+    let session = create_session(&service).context("Bluesky authentication failed")?;
 
     eprintln!(
         "Publisher '{}' (bluesky): authenticated as {} — posting {} record(s) to {}.",
-        job.name, session.handle, pending.len(), service
+        job.name,
+        session.handle,
+        pending.len(),
+        service
     );
 
     // Post each pending record, appending to the ledger as we go so a
@@ -330,9 +337,8 @@ fn read_ledger(path: &Path) -> Result<HashSet<String>> {
 /// directory) if needed.
 fn append_ledger(path: &Path, id: &str) -> Result<()> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).with_context(|| {
-            format!("Failed to create ledger directory: {}", parent.display())
-        })?;
+        fs::create_dir_all(parent)
+            .with_context(|| format!("Failed to create ledger directory: {}", parent.display()))?;
     }
     let mut file = fs::OpenOptions::new()
         .create(true)
@@ -414,7 +420,11 @@ fn create_session(service: &str) -> Result<Session> {
         .unwrap_or(&handle)
         .to_string();
 
-    Ok(Session { access_jwt, did, handle })
+    Ok(Session {
+        access_jwt,
+        did,
+        handle,
+    })
 }
 
 /// Post one `app.bsky.feed.post` record via `com.atproto.repo.createRecord`.

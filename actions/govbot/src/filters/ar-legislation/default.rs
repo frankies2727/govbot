@@ -4,7 +4,7 @@
 // to make the output more focused on important legislative actions.
 //
 // TO UPDATE THIS FILTER:
-// 1. Run: `just govbot logs --repos=ar --limit=100` to see recent log entries
+// 1. Run: `just govbot source --repos=ar --limit=100` to see recent log entries
 // 2. Analyze the output to identify patterns that are routine/noteworthy but not important:
 //    - Routine actions: committee referrals, first readings, filings, prefiling, status updates
 //    - Important actions: passage votes, executive signatures, amendments, failures, committee reports with substance
@@ -15,7 +15,7 @@
 //    - Check `classification` array for routine classifications
 //    - Check `description` string for routine text patterns (use `starts_with()`, `contains()`, or exact match)
 //    - Return `FilterResult::FilterOut` for routine entries, `FilterResult::Keep` for important ones
-// 5. Test your changes: `just govbot logs --repos=ar --limit=100 --filter=default`
+// 5. Test your changes: `just govbot source --repos=ar --limit=100 --filter=default`
 //
 // Current filter removes: routine filing, first reading/referrals, and routine procedural actions
 // ======================================

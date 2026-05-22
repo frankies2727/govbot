@@ -4,7 +4,7 @@
 //
 // TO UPDATE THIS FILTER FOR nj-legislation (New Jersey):
 // 1. First, gather real data by running this command:
-//    `just govbot logs --repos=nj --limit=100`
+//    `just govbot source --repos=nj --limit=100`
 // 2. Analyze the output to identify patterns that are routine/noteworthy but not important:
 //    - Routine actions: committee referrals, first readings, filings, prefiling, status updates
 //    - Important actions: passage votes, executive signatures, amendments, failures, committee reports with substance
@@ -15,7 +15,7 @@
 //    - Check `classification` array for routine classifications
 //    - Check `description` string for routine text patterns (use `starts_with()`, `contains()`, or exact match)
 //    - Return `FilterResult::FilterOut` for routine entries, `FilterResult::Keep` for important ones
-// 5. Test your changes: `just govbot logs --repos=nj --limit=100 --filter=default`
+// 5. Test your changes: `just govbot source --repos=nj --limit=100 --filter=default`
 //
 // Current filter removes: routine introductions, referrals, and routine status updates
 // ======================================

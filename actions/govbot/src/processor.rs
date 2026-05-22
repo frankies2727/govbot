@@ -1,10 +1,7 @@
 use crate::config::Config;
 use crate::error::{Error, Result};
 use crate::git;
-use crate::types::{
-    FileWithTimestamp, LogContent, LogEntry, Metadata,
-    VoteEventResult,
-};
+use crate::types::{FileWithTimestamp, LogContent, LogEntry, Metadata, VoteEventResult};
 use async_stream::stream;
 use futures::Stream;
 use jwalk::WalkDir;
@@ -90,7 +87,10 @@ impl PipelineProcessor {
 
         for search_path in search_paths {
             if !search_path.exists() {
-                eprintln!("Warning: Expected repository directory does not exist: {}", search_path.display());
+                eprintln!(
+                    "Warning: Expected repository directory does not exist: {}",
+                    search_path.display()
+                );
                 continue;
             }
             // A project's repo entry may be a symlink into the shared dataset
@@ -213,29 +213,37 @@ impl PipelineProcessor {
     /// Calculate relative path from search directory
     fn calculate_relative_path(path: &Path, search_dir: &Path) -> Result<String> {
         let search_dir_abs = search_dir.canonicalize().map_err(|_| {
-            Error::Path(format!("Failed to canonicalize search directory: {}", search_dir.display()))
+            Error::Path(format!(
+                "Failed to canonicalize search directory: {}",
+                search_dir.display()
+            ))
         })?;
-        
-        let path_abs = path.parent()
-            .ok_or_else(|| Error::Path(format!("Failed to get parent of path: {}", path.display())))?
+
+        let path_abs = path
+            .parent()
+            .ok_or_else(|| {
+                Error::Path(format!("Failed to get parent of path: {}", path.display()))
+            })?
             .canonicalize()
-            .map_err(|_| {
-                Error::Path(format!("Failed to canonicalize path: {}", path.display()))
-            })?;
+            .map_err(|_| Error::Path(format!("Failed to canonicalize path: {}", path.display())))?;
 
         let relative = pathdiff::diff_paths(&path_abs, &search_dir_abs)
             .ok_or_else(|| Error::Path("Failed to calculate relative path".to_string()))?;
 
         // Reconstruct the full relative path including the filename
-        let filename = path.file_name()
+        let filename = path
+            .file_name()
             .ok_or_else(|| Error::Path(format!("Failed to get filename: {}", path.display())))?;
-        
+
         Ok(relative.join(filename).to_string_lossy().to_string())
     }
 
     /// Sort files by timestamp according to sort order
     /// Uses relative_path as a secondary sort key to ensure deterministic ordering
-    fn sort_files_internal(config: &Config, mut files: Vec<FileWithTimestamp>) -> Vec<FileWithTimestamp> {
+    fn sort_files_internal(
+        config: &Config,
+        mut files: Vec<FileWithTimestamp>,
+    ) -> Vec<FileWithTimestamp> {
         match config.sort_order {
             crate::config::SortOrder::Descending => {
                 files.sort_by(|a, b| {
@@ -280,7 +288,10 @@ impl PipelineProcessor {
     }
 
     /// Apply limit to files
-    fn apply_limit_internal(config: &Config, files: Vec<FileWithTimestamp>) -> Vec<FileWithTimestamp> {
+    fn apply_limit_internal(
+        config: &Config,
+        files: Vec<FileWithTimestamp>,
+    ) -> Vec<FileWithTimestamp> {
         if let Some(limit) = config.limit {
             files.into_iter().take(limit).collect()
         } else {
@@ -289,7 +300,10 @@ impl PipelineProcessor {
     }
 
     /// Process a single file and return a log entry
-    async fn process_file_internal(config: &Config, file: &FileWithTimestamp) -> Result<Option<LogEntry>> {
+    async fn process_file_internal(
+        config: &Config,
+        file: &FileWithTimestamp,
+    ) -> Result<Option<LogEntry>> {
         // Check if it's a vote event file
         let is_vote_event = file.relative_path.contains(".vote_event.");
 
@@ -301,7 +315,10 @@ impl PipelineProcessor {
     }
 
     /// Process a vote event file
-    async fn process_vote_event_file_internal(_config: &Config, file: &FileWithTimestamp) -> Result<Option<LogEntry>> {
+    async fn process_vote_event_file_internal(
+        _config: &Config,
+        file: &FileWithTimestamp,
+    ) -> Result<Option<LogEntry>> {
         // Extract vote event result from filename
         let vote_event_regex = Regex::new(r"\.vote_event\.([^.]+)\.")?;
         let result = vote_event_regex
@@ -321,7 +338,10 @@ impl PipelineProcessor {
     }
 
     /// Process a regular (non-vote-event) file
-    async fn process_regular_file_internal(_config: &Config, file: &FileWithTimestamp) -> Result<Option<LogEntry>> {
+    async fn process_regular_file_internal(
+        _config: &Config,
+        file: &FileWithTimestamp,
+    ) -> Result<Option<LogEntry>> {
         // Read and parse JSON content
         let json_content = tokio::fs::read_to_string(&file.path).await?;
         let log_value: serde_json::Value = serde_json::from_str(&json_content)?;
@@ -367,4 +387,3 @@ impl PipelineProcessor {
         Ok(Some(metadata))
     }
 }
-
