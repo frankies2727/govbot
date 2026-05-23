@@ -51,13 +51,21 @@ Classification lives in a separate [`fastclass`](#classifying-with-fastclass) bu
 ### 3. Run the pipeline
 
 ```bash
-govbot run      # or just `govbot` — runs the pipeline when a govbot.yml is present
+govbot run --dry-run   # render-only: every publisher previews its output
+govbot run             # or just `govbot` — runs the pipeline when a govbot.yml is present
 ```
 
 With a `govbot.yml` in your directory, `govbot run` executes the full pipeline:
 1. Pulls/updates the declared dataset repositories.
 2. Classifies bills against your fastclass bundle (`source --select docs | fastclass classify - | apply`).
 3. Runs every publisher in `govbot.yml: publish:` — RSS / HTML / JSON / DuckDB / Bluesky.
+
+`govbot run --dry-run` propagates `--dry-run` to every publisher — the
+`bluesky` publisher renders posts to stderr/stdout and touches no network or
+ledger. Without `--dry-run`, a `bluesky` publisher whose `BLUESKY_HANDLE` /
+`BLUESKY_APP_PASSWORD` env vars are not set is **skipped with a `WARN`**
+rather than failing the pipeline — first-time runs without creds still emit
+the RSS / HTML feeds.
 
 ### Other Commands
 
@@ -73,6 +81,7 @@ govbot source --select docs | fastclass classify - classifier=./classifier | gov
 govbot apply               # persist a fastclass result stream into the dataset
 govbot publish             # run every configured publisher (RSS / HTML / JSON / DuckDB / Bluesky)
 govbot publish --publisher bluesky --dry-run   # ALWAYS dry-run Bluesky first
+govbot run --dry-run       # full pipeline, every publisher dry-run (recommended first run)
 govbot run                 # the full pipeline: pull -> classify -> apply -> publish
 govbot load                # load bill metadata into DuckDB
 govbot delete all          # unlink all locally-linked datasets (the shared cache stays)

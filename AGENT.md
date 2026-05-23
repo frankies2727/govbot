@@ -371,7 +371,8 @@ elsewhere.
 
 ```bash
 govbot pull il ny          # clone the datasets (or: govbot pull all)
-govbot run                 # pull -> classify -> apply -> publish
+govbot run --dry-run       # pull -> classify -> apply -> publish (render-only)
+govbot run                 # same, but actually emits / posts
 ```
 
 `govbot pull` clones each dataset once into the shared `~/.govbot/cache/` and
@@ -379,7 +380,15 @@ writes `govbot.lock` pinning the exact commit each resolved to. Commit
 `govbot.lock` to the project repo — it makes runs reproducible. A second
 `pull` (here or in any other project) reuses the cache instead of re-cloning.
 
-For the Bluesky publisher, **always dry-run first** — see §2.
+`govbot run --dry-run` propagates `--dry-run` to every publisher — the
+`bluesky` publisher honours this by rendering the posts it *would* send and
+touching no network and no ledger. Pair the dry-run with §2.3 before going
+live with the Bluesky bot.
+
+When the Bluesky creds (`BLUESKY_HANDLE` / `BLUESKY_APP_PASSWORD`) are not
+set, the `bluesky` publisher logs a `WARN` and **skips** rather than failing
+the pipeline — so a first-time `govbot run` without creds still emits the
+RSS / HTML feeds.
 
 ---
 
@@ -422,12 +431,17 @@ Credentials are **never** config fields — they are env-only.
 
 ```bash
 govbot publish --publisher bluesky --dry-run
+# or, end-to-end through the whole pipeline:
+govbot run --dry-run
 ```
 
 `--dry-run` renders the posts that *would* be sent and **touches no network
 and no ledger**. Review the rendered text with the user — check the template,
 the 300-char truncation, and that `min_score` is neither too loose (spam) nor
 too tight (silence). Adjust `post_template` / `min_score` and re-dry-run.
+
+`govbot run --dry-run` is the recommended first invocation: it propagates
+`--dry-run` to every publisher and exits clean even without Bluesky creds.
 
 ### 2.4 Go live
 

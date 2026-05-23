@@ -118,7 +118,23 @@ pub fn run_bluesky(job: &PublishJob, dry_run: bool) -> Result<()> {
         return Ok(());
     }
 
-    // Authenticate — credentials are environment-only.
+    // Authenticate — credentials are environment-only. If they are absent,
+    // skip the publisher with a WARN rather than failing the whole pipeline:
+    // first-time activists running `govbot run` without Bluesky creds yet
+    // should still get their RSS / HTML feeds rather than a red error.
+    // Pair this with `govbot run --dry-run` to render-only without
+    // requiring creds at all.
+    if !creds_present() {
+        eprintln!(
+            "⚠️  Publisher '{}' (bluesky): BLUESKY_HANDLE / BLUESKY_APP_PASSWORD \
+             not set — skipping. Set them (an app password from Bluesky \
+             Settings → App Passwords) to go live; or use `govbot run \
+             --dry-run` / `govbot publish --publisher {} --dry-run` to \
+             render-only.",
+            job.name, job.name
+        );
+        return Ok(());
+    }
     let service = std::env::var("BLUESKY_SERVICE")
         .ok()
         .filter(|s| !s.trim().is_empty())
@@ -475,6 +491,21 @@ fn create_post(service: &str, session: &Session, text: &str) -> Result<String> {
         .to_string())
 }
 
+/// True when both required Bluesky credential env vars are set and non-empty.
+/// Used to decide whether the publisher should skip-with-WARN (missing creds)
+/// or attempt the live authentication flow.
+fn creds_present() -> bool {
+    env_nonempty("BLUESKY_HANDLE") && env_nonempty("BLUESKY_APP_PASSWORD")
+}
+
+/// True when `key` is set to a non-empty (and non-whitespace) value.
+fn env_nonempty(key: &str) -> bool {
+    std::env::var(key)
+        .ok()
+        .map(|v| !v.trim().is_empty())
+        .unwrap_or(false)
+}
+
 /// Read a required environment variable, with an actionable error message.
 fn require_env(key: &str) -> Result<String> {
     std::env::var(key)
@@ -531,6 +562,49 @@ mod tests {
     fn threshold_rejects_untagged() {
         assert!(!record_clears_threshold(&json!({}), &[], 0.0));
         assert!(!record_clears_threshold(&json!({ "tags": {} }), &[], 0.0));
+    }
+
+    /// When BLUESKY_HANDLE / BLUESKY_APP_PASSWORD are absent, `creds_present`
+    /// reports `false` — the signal that lets `run_bluesky` skip with a WARN
+    /// instead of failing the whole pipeline. With both set non-empty,
+    /// `true`.
+    ///
+    /// This test mutates process env; `cargo test` runs threads in parallel by
+    /// default, so it locks a mutex around the env touch.
+    #[test]
+    fn creds_present_reflects_env() {
+        // Serialise env mutation across the env-touching tests so parallel
+        // test threads can't see each other's writes mid-check.
+        use std::sync::Mutex;
+        static ENV_LOCK: Mutex<()> = Mutex::new(());
+        let _g = ENV_LOCK.lock().unwrap();
+
+        // Snapshot original values to restore at the end.
+        let prev_h = std::env::var("BLUESKY_HANDLE").ok();
+        let prev_p = std::env::var("BLUESKY_APP_PASSWORD").ok();
+
+        std::env::remove_var("BLUESKY_HANDLE");
+        std::env::remove_var("BLUESKY_APP_PASSWORD");
+        assert!(!creds_present());
+
+        std::env::set_var("BLUESKY_HANDLE", "x.bsky.social");
+        assert!(!creds_present()); // password still missing
+
+        std::env::set_var("BLUESKY_APP_PASSWORD", "abcd-efgh-ijkl-mnop");
+        assert!(creds_present());
+
+        std::env::set_var("BLUESKY_HANDLE", "   "); // whitespace-only
+        assert!(!creds_present());
+
+        // Restore.
+        match prev_h {
+            Some(v) => std::env::set_var("BLUESKY_HANDLE", v),
+            None => std::env::remove_var("BLUESKY_HANDLE"),
+        }
+        match prev_p {
+            Some(v) => std::env::set_var("BLUESKY_APP_PASSWORD", v),
+            None => std::env::remove_var("BLUESKY_APP_PASSWORD"),
+        }
     }
 
     #[test]

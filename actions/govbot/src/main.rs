@@ -253,6 +253,14 @@ enum Command {
         /// Govbot directory (default: $CWD/.govbot, or GOVBOT_DIR env var)
         #[arg(long = "govbot-dir")]
         govbot_dir: Option<String>,
+
+        /// Render but do not emit. Propagates to every publisher — the
+        /// `bluesky` publisher honours this by printing the posts it would
+        /// send and touching no network/ledger. Recommended for first runs:
+        /// a missing-cred `bluesky` publisher already auto-skips with a
+        /// WARN, but `--dry-run` makes it explicit.
+        #[arg(long = "dry-run")]
+        dry_run: bool,
     },
 
     /// Scaffold a new govbot.yml in the current directory (the setup wizard).
@@ -2451,7 +2459,10 @@ async fn main() -> anyhow::Result<()> {
         Some(Command::Update) => run_update_command().await,
         Some(cmd @ Command::Apply { .. }) => run_apply_command(cmd).await,
         Some(cmd @ Command::Publish { .. }) => run_publish_command(cmd).await,
-        Some(Command::Run { govbot_dir }) => {
+        Some(Command::Run {
+            govbot_dir,
+            dry_run,
+        }) => {
             let cwd = std::env::current_dir()?;
             let config_path = cwd.join("govbot.yml");
             if !config_path.exists() {
@@ -2460,7 +2471,7 @@ async fn main() -> anyhow::Result<()> {
                     cwd.display()
                 );
             }
-            govbot::pipeline::run_pipeline(&config_path, govbot_dir.as_deref())
+            govbot::pipeline::run_pipeline(&config_path, govbot_dir.as_deref(), dry_run)
         }
         Some(Command::Init) => {
             let cwd = std::env::current_dir()?;
@@ -2493,7 +2504,7 @@ async fn main() -> anyhow::Result<()> {
                 // to start the pipeline (matches the wizard's own message).
                 return Ok(());
             }
-            govbot::pipeline::run_pipeline(&config_path, None)
+            govbot::pipeline::run_pipeline(&config_path, None, false)
         }
     }
 }

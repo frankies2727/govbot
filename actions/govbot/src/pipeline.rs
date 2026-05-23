@@ -14,9 +14,13 @@ use std::process::{Command, Stdio};
 ///     `govbot apply`.
 ///  3. **publish** — run `govbot publish` to emit the manifest's publishers.
 ///
+/// `dry_run` is passed through to step 3 so publishers render but do not
+/// emit; the `bluesky` publisher in particular honours it by touching no
+/// network and no ledger.
+///
 /// Smart update behavior: if `<govbot_dir>/repos/` already has datasets, just
 /// `git pull`; otherwise clone the manifest's `datasets`.
-pub fn run_pipeline(config_path: &Path, govbot_dir: Option<&str>) -> Result<()> {
+pub fn run_pipeline(config_path: &Path, govbot_dir: Option<&str>, dry_run: bool) -> Result<()> {
     let govbot_bin = std::env::current_exe().context("Failed to determine govbot binary path")?;
 
     let cwd = config_path.parent().unwrap_or_else(|| Path::new("."));
@@ -102,6 +106,9 @@ pub fn run_pipeline(config_path: &Path, govbot_dir: Option<&str>) -> Result<()> 
     publish_cmd.arg("publish");
     if let Some(d) = govbot_dir {
         publish_cmd.arg("--govbot-dir").arg(d);
+    }
+    if dry_run {
+        publish_cmd.arg("--dry-run");
     }
     let publish_status = publish_cmd
         .current_dir(cwd)
