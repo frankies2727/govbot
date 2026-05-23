@@ -90,6 +90,44 @@ govbot publish       # Run the manifest's publishers (RSS / HTML / JSON / DuckDB
 govbot run           # Run the full pipeline: pull -> classify -> apply -> publish
 ```
 
+## govbot source — streaming legislative activity
+
+`govbot source` walks every linked dataset and emits one JSON record per
+bill log entry. It is the **source** stage of the stream protocol — the
+records `govbot publish` and `fastclass classify` consume.
+
+### The `--filter default` policy
+
+`--filter` defaults to `default`, which applies the per-dataset filter under
+`actions/govbot/src/filters/<dataset>/default.rs`. Each dataset's `default.rs`
+implements an **action-based** rule that drops *routine* log entries —
+introductions, committee referrals, "Bill Number Assigned", "Placed on
+General File", boilerplate "President Signed" lines, prefiling, status
+updates — so the stream emits only **substantive** events (passage votes,
+executive signatures, amendments, defeats, committee reports with content).
+
+This is not a recency cut. A bill whose only log entries are routine
+actions — e.g. a freshly-filed bill with just an "Introduction" log —
+emits **zero records** under `--filter default` until a substantive event
+lands. The bill itself is not deleted; it simply produces no stream rows
+yet. Once a substantive log appears (e.g. a passage vote later in the
+session), the bill flows through.
+
+If a bill is unexpectedly missing from `source` output:
+```bash
+govbot source --filter none --repos <dataset>   # confirm it's the filter
+```
+If `--filter none` shows the bill and `--filter default` does not, the
+fix is to add a substantive log entry, not to change the filter.
+
+### The `--select docs` projection
+
+`--select docs` collapses each surviving entry to the
+`{"id","text","kind":"docs"}` document the stream protocol defines
+(`schemas/STREAM_PROTOCOL.md` §1) — the record `fastclass classify -`
+consumes. The default `--select default` keeps the full joined record
+for `govbot publish` and ad-hoc analysis.
+
 ## DuckDB Integration
 
 The `govbot load` command loads bill metadata into a DuckDB database for SQL analysis.

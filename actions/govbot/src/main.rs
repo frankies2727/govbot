@@ -130,7 +130,19 @@ enum Command {
         #[arg(long, default_value = "default", value_parser = ["default", "docs"])]
         select: String,
 
-        /// Filter log entries based on per-repo AI generated filters (default: `default`) options: `default` | `none`
+        /// Per-repo log filter (default: `default`). Options: `default` |
+        /// `none`. `default` applies the per-dataset filter under
+        /// `src/filters/<dataset>/default.rs` — it drops *routine* log
+        /// actions (introductions, committee referrals, "Bill Number
+        /// Assigned", "Placed on General File", boilerplate "President
+        /// Signed" log lines, etc.) so the stream emits only **substantive**
+        /// events: passage votes, executive signatures, amendments, defeats.
+        /// `none` keeps every log entry. The default filter is action-based,
+        /// not date-based: a bill whose only logs are routine actions
+        /// (e.g. a freshly-filed bill with just an "Introduction" log) will
+        /// emit zero records under `--filter default` until a substantive
+        /// event lands. Use `--filter none` to confirm a bill is missing
+        /// because of the filter rather than a data problem.
         #[arg(long, default_value = "default", value_parser = ["default", "none"])]
         filter: String,
 
