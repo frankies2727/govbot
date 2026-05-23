@@ -2326,6 +2326,17 @@ async fn run_publish_command(cmd: Command) -> anyhow::Result<()> {
         }
     });
 
+    // Resolve the companion html-publisher landing URL once: the bluesky
+    // publisher uses it as the default for `{link}` so a post links to the
+    // human-readable HTML index, not the raw metadata.json path under its
+    // own `base_url`. None when the manifest has no html publisher.
+    let html_entry_url: Option<String> = manifest
+        .publish
+        .values()
+        .find(|p| p.kind == govbot::PublisherKind::Html)
+        .and_then(|p| p.base_url.clone())
+        .filter(|u| !u.trim().is_empty());
+
     // Run each named publisher against its filtered/sorted/limited stream.
     for name in &names_to_run {
         let publisher = manifest.publish.get(name).expect("checked above");
@@ -2375,6 +2386,7 @@ async fn run_publish_command(cmd: Command) -> anyhow::Result<()> {
             output_file_override: output_file.clone(),
             project_dir: current_dir.clone(),
             dry_run,
+            html_entry_url: html_entry_url.clone(),
         };
         govbot::publish::run_publisher(&job)?;
     }

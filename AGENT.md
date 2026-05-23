@@ -177,10 +177,10 @@ publish:
     type: bluesky
     select: [transit_funding, transit_safety]   # tag names from classifier.yml
     min_score: 0.6        # calibrated final_score threshold; 0..1
-    # base_url is the prefix used by the `{link}` placeholder below — set it
-    # to wherever the bill page actually lives (e.g. the GitHub Pages URL of
-    # the rss/html publisher), otherwise `{link}` falls back to the bill's
-    # bill.sources[0].url (if any) or renders empty.
+    # `{link}` defaults to the companion `html` publisher's base_url (the
+    # human landing page), so the cleanest setup is to declare an `html`
+    # publisher in this manifest. `base_url` here is only the fallback when
+    # no `html` publisher is configured.
     base_url: "https://<user>.github.io/<repo>"
     post_template: "{title}\n\n{tags} · {link}"
     # ledger: .govbot/bluesky-bluesky.ledger   # default; tracks posted bills
@@ -439,9 +439,16 @@ Under `govbot.yml: publish:` (see the template in §1.3):
 | `type: bluesky` | selects the Bluesky publisher |
 | `select` | tag names to post — must exist in the classifier bundle |
 | `min_score` | minimum calibrated `final_score` (0..1) to post; default `0.6` |
-| `base_url` | prefix used to render `{link}` in `post_template`; same shape as the rss/html publishers' `base_url`. Falls back to `bill.sources[0].url` when unset |
+| `base_url` | fallback prefix for `{link}` when no companion `html` publisher is configured; same shape as the rss/html publishers' `base_url` |
 | `post_template` | post text; placeholders `{title} {tags} {link} {identifier} {session} {score}`; truncated to 300 chars |
 | `ledger` | posted-state ledger path; default `.govbot/bluesky-<name>.ledger` |
+
+`{link}` resolves in this order: (1) the manifest's `html` publisher's
+`base_url` — the **human-readable landing page** activists actually click
+through to; (2) the bluesky publisher's own `base_url` joined to the bill's
+dataset path; (3) the bill's first upstream source URL. Configuring an
+`html` publisher alongside `bluesky` makes the default useful — without it,
+`{link}` resolves to a raw `metadata.json` path under `base_url`.
 
 Credentials are **never** config fields — they are env-only.
 

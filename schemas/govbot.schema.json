@@ -98,7 +98,7 @@
           }
         },
         "base_url": {
-          "description": "Base URL for generated links. Required for rss/html (e.g. the GitHub Pages URL). Optional for bluesky -- when set, it is the prefix used to render the '{link}' placeholder in 'post_template'; when omitted, '{link}' falls back to the bill's 'bill.sources[0].url' (or renders empty).",
+          "description": "Base URL for generated links. Required for rss/html (e.g. the GitHub Pages URL). For bluesky, '{link}' defaults to the manifest's companion 'html' publisher's base_url (the human-readable landing page activists click through to); when no 'html' publisher is configured, '{link}' falls back to this 'base_url' joined to the bill's dataset path, and then to 'bill.sources[0].url'.",
           "type": "string",
           "format": "uri"
         },

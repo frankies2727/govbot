@@ -22,6 +22,21 @@
 //!   - `BLUESKY_APP_PASSWORD`  — an app password (Settings → App Passwords),
 //!                               never the main account password
 //!   - `BLUESKY_SERVICE`       — optional PDS base URL (default `https://bsky.social`)
+//!
+//! ### `{link}` resolution
+//!
+//! `{link}` in `post_template` resolves with this priority:
+//!   1. the manifest's companion `html` publisher's `base_url` — the
+//!      human-readable landing page activists actually want to click through
+//!      to (computed once in `run_publish_command` and passed in via
+//!      `PublishJob::html_entry_url`);
+//!   2. the bluesky publisher's own `base_url` joined to the bill's dataset
+//!      `sources.bill` path — the historical default, which points at the
+//!      raw `metadata.json` file (rarely what an activist wants);
+//!   3. the bill's `bill.sources[0].url` (the upstream legislature page).
+//!
+//! Declaring an `html` publisher alongside `bluesky` is what makes the
+//! default useful. See AGENT.md §2.2.
 
 use crate::publish::PublishJob;
 use anyhow::{Context, Result};
@@ -63,11 +78,28 @@ pub fn run_bluesky(job: &PublishJob, dry_run: bool) -> Result<()> {
     let ledger_path = resolve_ledger_path(job);
 
     // Select records: a `select`ed tag must clear the calibrated threshold.
+    //
+    // `{link}` resolves with this priority:
+    //   1. the companion `html` publisher's landing-page URL (the human page);
+    //   2. the bill's `bill.sources[0].url` (the upstream legislature page);
+    //   3. the bluesky publisher's own `base_url` joined to the bill source
+    //      path (the historical default — `metadata.json`, the JSON file).
+    // Most useful default with no new manifest surface: when the manifest
+    // carries an html publisher, route activists to that human page rather
+    // than to the raw JSON that the rss/html publishers' `extract_link`
+    // emits.
     let posts: Vec<RenderedPost> = job
         .entries
         .iter()
         .filter(|e| record_clears_threshold(e, &select, min_score))
-        .map(|e| render_post(e, p.post_template.as_deref(), p.base_url.as_deref()))
+        .map(|e| {
+            render_post(
+                e,
+                p.post_template.as_deref(),
+                p.base_url.as_deref(),
+                job.html_entry_url.as_deref(),
+            )
+        })
         .collect();
 
     if posts.is_empty() {
@@ -213,12 +245,24 @@ fn record_clears_threshold(entry: &Value, select: &[String], min_score: f64) -> 
 /// Render a record into post text, applying the template and truncating to
 /// the Bluesky character limit.
 ///
-/// `base_url` — the publisher's `base_url` field — is the prefix prepended to
-/// the bill's source-relative path when assembling `{link}`. Mirrors the
-/// rss/html publishers' shape so a user can put a public URL into post text.
-/// If `base_url` is `None`, the link falls back to the bill's
-/// `bill.sources[0].url` (if present); otherwise `{link}` renders empty.
-fn render_post(entry: &Value, template: Option<&str>, base_url: Option<&str>) -> RenderedPost {
+/// `{link}` resolution order:
+///   1. `html_entry_url` — the manifest's companion `html` publisher's
+///      landing-page URL (the human-readable index activists actually want
+///      to click through to);
+///   2. the bill's `bill.sources[0].url` (the upstream legislature page);
+///   3. `base_url` joined to the bill's `sources.bill` dataset path
+///      (the historical default — a raw `metadata.json` link);
+///   4. empty.
+///
+/// The html-publisher route is the *useful default* — without it, `{link}`
+/// resolves to `<base_url>/<dataset>/.../metadata.json`, which renders an
+/// activist's reader landing on a JSON file. See Bug 7.
+fn render_post(
+    entry: &Value,
+    template: Option<&str>,
+    base_url: Option<&str>,
+    html_entry_url: Option<&str>,
+) -> RenderedPost {
     let id = crate::rss::extract_guid(entry);
     let template = template.unwrap_or(DEFAULT_TEMPLATE);
 
@@ -228,7 +272,7 @@ fn render_post(entry: &Value, template: Option<&str>, base_url: Option<&str>) ->
         .and_then(|t| t.as_object())
         .map(|m| m.keys().cloned().collect::<Vec<_>>().join(", "))
         .unwrap_or_default();
-    let link = crate::rss::extract_link(entry, base_url).unwrap_or_default();
+    let link = resolve_link(entry, base_url, html_entry_url).unwrap_or_default();
     let identifier = entry
         .get("bill")
         .and_then(|b| b.get("identifier"))
@@ -258,6 +302,34 @@ fn render_post(entry: &Value, template: Option<&str>, base_url: Option<&str>) ->
         id,
         text: truncate_post(&text),
     }
+}
+
+/// Resolve `{link}` for a bluesky post.
+///
+/// Priority:
+///   1. the companion `html` publisher's landing-page URL — the
+///      human-readable index page the manifest already promised activists
+///      (the fix for Bug 7);
+///   2. the historical default — `extract_link`: bluesky's own `base_url`
+///      joined to the dataset `sources.bill` path, falling back to the
+///      bill's first upstream source URL.
+///
+/// (1) is the useful default: without it, `{link}` pointed at the raw
+/// `metadata.json` path under the bluesky `base_url`, which sent an
+/// activist's reader to a JSON file. The html publisher's landing page is
+/// the human page an activist actually wants to click.
+fn resolve_link(
+    entry: &Value,
+    base_url: Option<&str>,
+    html_entry_url: Option<&str>,
+) -> Option<String> {
+    if let Some(url) = html_entry_url {
+        let trimmed = url.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.trim_end_matches('/').to_string());
+        }
+    }
+    crate::rss::extract_link(entry, base_url)
 }
 
 /// The highest calibrated `final_score` across a record's tags.
@@ -620,7 +692,12 @@ mod tests {
             "bill": { "title": "Renewable energy storage act", "identifier": "HB 1" },
             "tags": { "clean_energy": { "final_score": 0.92 } }
         });
-        let post = render_post(&entry, Some("{title} [{identifier}] {tags} {score}"), None);
+        let post = render_post(
+            &entry,
+            Some("{title} [{identifier}] {tags} {score}"),
+            None,
+            None,
+        );
         assert!(post.text.contains("Renewable energy storage act"));
         assert!(post.text.contains("[HB 1]"));
         assert!(post.text.contains("clean_energy"));
@@ -642,6 +719,7 @@ mod tests {
             &entry,
             Some("{title} {link}"),
             Some("https://example.org/climate-tracker"),
+            None, // no companion html publisher
         );
         assert!(
             post.text.contains(
@@ -667,10 +745,48 @@ mod tests {
             },
             "tags": { "clean_energy": { "final_score": 0.9 } }
         });
-        let post = render_post(&entry, Some("{title} -> {link}"), None);
+        let post = render_post(&entry, Some("{title} -> {link}"), None, None);
         assert!(
             post.text.contains("https://wyoleg.gov/2025/Bills/HB0001"),
             "expected bill.sources[0].url to render as {{link}}; got: {}",
+            post.text
+        );
+    }
+
+    /// Bug 7 regression: when the manifest has a companion `html` publisher,
+    /// `{link}` resolves to that publisher's landing-page URL — not to the
+    /// raw `metadata.json` path under bluesky's own `base_url`.
+    ///
+    /// Before this fix, with bluesky `base_url:
+    /// https://example.org/climate-tracker` set, a userland dry-run rendered:
+    ///   https://example.org/climate-tracker/wy-legislation/.../HB9999/metadata.json
+    /// which is a JSON file, not a human page.
+    #[test]
+    fn render_link_prefers_html_publisher_landing_page() {
+        let entry = json!({
+            "id": "wy-legislation/country:us/state:wy/sessions/2025/bills/HB9999",
+            "bill": { "title": "Clean energy tax credit", "identifier": "HB9999" },
+            "sources": {
+                "bill": "wy-legislation/country:us/state:wy/sessions/2025/bills/HB9999/metadata.json"
+            },
+            "tags": { "clean_energy": { "final_score": 0.91 } }
+        });
+        let post = render_post(
+            &entry,
+            Some("{title} -> {link}"),
+            Some("https://example.org/climate-tracker"), // bluesky's own base_url
+            Some("https://example.org/climate-tracker"), // companion html publisher's base_url
+        );
+        // Must NOT route activists at the raw JSON path.
+        assert!(
+            !post.text.contains("metadata.json"),
+            "expected {{link}} to skip the metadata.json path when a companion html publisher exists; got: {}",
+            post.text
+        );
+        // Must land at the html publisher's URL — the human-readable index.
+        assert!(
+            post.text.contains("https://example.org/climate-tracker"),
+            "expected {{link}} to resolve to the html publisher's landing-page URL; got: {}",
             post.text
         );
     }

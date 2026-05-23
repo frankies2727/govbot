@@ -31,6 +31,13 @@ pub struct PublishJob<'a> {
     /// `--dry-run`: render but do not emit. The `bluesky` publisher honours
     /// this by touching no network and no ledger.
     pub dry_run: bool,
+    /// The companion `html` publisher's public landing-page URL, if the
+    /// manifest declares one (e.g. `https://example.org/climate-tracker`).
+    /// The `bluesky` publisher uses this as the default for `{link}` so a
+    /// post links to the *human-readable* HTML index — not the raw
+    /// `metadata.json` path that the rss/html publishers' `extract_link`
+    /// emits by default. None when the manifest has no `html` publisher.
+    pub html_entry_url: Option<String>,
 }
 
 /// Run a single publisher against its result stream and emit artifacts.
