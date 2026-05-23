@@ -871,8 +871,21 @@ async fn run_delete_command(cmd: Command) -> anyhow::Result<()> {
 ///      the *session* and collide every bill in that session onto one id
 ///      (real bug surfaced by `govbot pull all` over the 55-state corpus:
 ///      4916 records collapsed to 97 ids). The fix appends the bill_id
-///      from `log.bill_id` whenever the stripped path doesn't already end
-///      in `/bills/<id>`.
+///      whenever the stripped path doesn't already end in `/bills/<id>`.
+///
+/// **Bill-id source of truth.** The on-disk bill directory name (e.g.
+/// `HB5109`) does **not** always equal the `log.bill_id` field (e.g.
+/// `"HB 5109"`). MI/WV/ND/PA logs carry a *display* bill id with a space
+/// between the chamber prefix and the number; the actual `bills/<dir>/`
+/// directory has no space. Using `log.bill_id` verbatim produces an `id`
+/// like `.../bills/HB 5109` that no `os.path.join(REPOS, doc,
+/// "metadata.json")` can resolve. The fix is to take the canonical bill
+/// dir name from `sources.bill` (the parent dir of `metadata.json` — the
+/// *resolved* on-disk path, set during the `bill` join) whenever
+/// available, and fall back to `log.bill_id` only when the bill join is
+/// absent. Layout 1 (suffix already present in `sources.log`) is left
+/// untouched — that path is itself the canonical on-disk path, so the
+/// bill segment is correct by construction.
 ///
 /// `text` is the **full** bill text assembled from `metadata.json` (not just
 /// titles) — the `docs` projection joins the complete bill so this is whole.
@@ -883,6 +896,19 @@ fn ocd_entry_to_doc(entry: &serde_json::Value) -> serde_json::Value {
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
+    // Canonical on-disk bill directory name, derived from `sources.bill`
+    // (the path to `metadata.json`, which the bill join resolves to the
+    // real `bills/<dir>/metadata.json` on disk — even when the log was a
+    // session-level symlink). This is the authoritative source for the
+    // `/bills/<dir>` segment because `log.bill_id` may carry a display
+    // form (e.g. `"HB 5109"`) that differs from the directory (`HB5109`).
+    let canonical_bill_dir = entry
+        .get("sources")
+        .and_then(|s| s.get("bill"))
+        .and_then(|v| v.as_str())
+        .and_then(bill_dir_from_metadata_path)
+        .map(|s| s.to_string());
+
     let stripped = entry
         .get("sources")
         .and_then(|s| s.get("log"))
@@ -890,25 +916,73 @@ fn ocd_entry_to_doc(entry: &serde_json::Value) -> serde_json::Value {
         .and_then(|log_path| log_path.split("/logs/").next())
         .map(|s| s.to_string());
 
-    let id = match (stripped, bill_id.as_deref()) {
-        (Some(path), Some(bid)) => {
-            let suffix = format!("/bills/{}", bid);
-            if path.ends_with(&suffix) {
-                // Layout 1: log already lived under bills/<id>/logs/.
+    // Layout 1 still trusts the stripped log path: when `sources.log`
+    // already ends in `/bills/<dir>` that dir name is itself canonical
+    // (it came from the on-disk walk). Layout 2 must prefer the
+    // `sources.bill`-derived dir name; only fall back to `log.bill_id`
+    // when the bill join wasn't requested.
+    //
+    // The Layout-1 test must consider BOTH the canonical bill dir (from
+    // `sources.bill`) AND `log.bill_id`. If we only checked
+    // `log.bill_id`, then MI/WV/ND/PA — whose log carries `"HB 0163"`
+    // but on-disk dir is `HB0163` — would fail the Layout-1 test even
+    // when `sources.log` already ends in `/bills/HB0163`, and we'd
+    // double-append, producing `.../bills/HB0163/bills/HB0163`.
+    let id = match stripped {
+        Some(path) => {
+            let already_ends_in_bill_dir = canonical_bill_dir
+                .as_deref()
+                .map(|d| path.ends_with(&format!("/bills/{}", d)))
+                .unwrap_or(false)
+                || bill_id
+                    .as_deref()
+                    .map(|d| path.ends_with(&format!("/bills/{}", d)))
+                    .unwrap_or(false);
+            if already_ends_in_bill_dir {
+                // Layout 1: log lived under bills/<id>/logs/. The stripped
+                // path is already the canonical bill dir.
                 path
-            } else {
-                // Layout 2: session-level log (symlink to per-bill log).
-                // The stripped path stops at `.../sessions/<session>`;
-                // append the bill_id from the log entry to identify the
-                // bill, not the session.
+            } else if let Some(canon) = canonical_bill_dir.as_deref() {
+                // Layout 2 (preferred): use the on-disk dir name from the
+                // resolved metadata.json path, so display-form bill ids
+                // with whitespace (e.g. `"HB 5109"`) don't bleed into the
+                // doc id and break sibling-file lookups.
+                format!("{}/bills/{}", path, canon)
+            } else if let Some(bid) = bill_id.as_deref() {
+                // Layout 2 fallback: no bill join, so the best we have is
+                // the log's `bill_id`. This may be a display form; callers
+                // doing path lookups should treat it as advisory.
                 format!("{}/bills/{}", path, bid)
+            } else {
+                path
             }
         }
-        (Some(path), None) => path,
-        (None, Some(bid)) => bid.to_string(),
-        (None, None) => String::new(),
+        None => canonical_bill_dir.or(bill_id).unwrap_or_else(String::new),
     };
     serde_json::json!({ "id": id, "text": ocd_files_select_default(entry), "kind": "docs" })
+}
+
+/// Given a `sources.bill` path (`<...>/bills/<dir>/metadata.json`,
+/// possibly with `..` prefixes from a cache-symlinked repo), return the
+/// `<dir>` segment — the canonical on-disk bill directory name. Returns
+/// `None` if the path doesn't end in `bills/<dir>/metadata.json`.
+fn bill_dir_from_metadata_path(metadata_path: &str) -> Option<&str> {
+    // Strip the trailing filename.
+    let without_file = metadata_path.strip_suffix("/metadata.json")?;
+    // Take the last path segment — that's the bill dir.
+    let last_slash = without_file.rfind('/')?;
+    let dir = &without_file[last_slash + 1..];
+    // Sanity check: the segment before that should be `bills`. If not,
+    // the path doesn't look like a bill metadata path; refuse to guess.
+    let before_dir = &without_file[..last_slash];
+    if !before_dir.ends_with("/bills") && before_dir != "bills" {
+        return None;
+    }
+    if dir.is_empty() {
+        None
+    } else {
+        Some(dir)
+    }
 }
 
 async fn run_source_command(cmd: Command) -> anyhow::Result<()> {
@@ -2906,6 +2980,253 @@ mod tests {
             unique.len(),
             "4 bills under one session must produce 4 distinct ids; got: {:?}",
             ids
+        );
+    }
+
+    /// REGRESSION (real-data bug, 55-state corpus): MI/WV/ND/PA legislature
+    /// logs ship a `bill_id` field with a *display* space — e.g.
+    /// `"HB 5077"`, `"SB 0001"` — even though the corresponding on-disk
+    /// directory is `bills/HB5077/`, `bills/SB0001/` (no space). The
+    /// pre-fix `ocd_entry_to_doc` for the Layout-2 (session-level symlink)
+    /// case appended `log.bill_id` verbatim, producing ids like
+    /// `mi-legislation/.../bills/SB 0001`. Downstream consumers doing a
+    /// sibling `metadata.json` lookup via path joining
+    /// (`os.path.join(REPOS, doc, "metadata.json")`) then 404'd because no
+    /// such directory exists on disk. The architect saw "(no metadata.json)"
+    /// for ~30% of bills.
+    ///
+    /// The fix sources the `/bills/<dir>` segment from the resolved
+    /// `sources.bill` path (the parent dir of `metadata.json`, which the
+    /// `bill` join produced from the canonicalized log path) — that is the
+    /// authoritative on-disk dir name. The id must NOT contain whitespace
+    /// in the bill segment, and it must point to a directory that exists.
+    #[test]
+    fn ocd_entry_to_doc_uses_canonical_bill_dir_when_log_bill_id_has_whitespace() {
+        let entry = serde_json::json!({
+            "log": {
+                // Display form with a space — this is what MI/WV/ND/PA emit.
+                "bill_id": "SB 0001",
+                "action": { "description": "PASSED" }
+            },
+            "bill": { "title": "Mock", "identifier": "SB 0001" },
+            "sources": {
+                // Session-level symlink layout (Layout 2). `sources.log`
+                // stops at the session because the walker reported the
+                // symlink, not the canonical target.
+                "log": "mi-legislation/country:us/state:mi/sessions/2025-2026/logs/20250108T000000Z_referred_to_committee_of_the_whole_SB0001.json",
+                // `sources.bill` points at the *resolved* on-disk
+                // metadata.json — the parent dir is the canonical bill dir
+                // name (no whitespace).
+                "bill": "../../../../.govbot/cache/mi-ad5ea7bbd548/country:us/state:mi/sessions/2025-2026/bills/SB0001/metadata.json"
+            }
+        });
+        let doc = ocd_entry_to_doc(&entry);
+        let id = doc
+            .get("id")
+            .and_then(|v| v.as_str())
+            .expect("doc id must be a string");
+        // The id must end at the on-disk dir, not the display bill_id.
+        assert_eq!(
+            id, "mi-legislation/country:us/state:mi/sessions/2025-2026/bills/SB0001",
+            "id must use the canonical on-disk bill dir name (no whitespace)"
+        );
+        // No whitespace anywhere in the id — that's what makes
+        // `os.path.join(REPOS, doc, \"metadata.json\")` resolve to a real
+        // file on a real filesystem.
+        assert!(
+            !id.contains(' '),
+            "id must not carry display-form whitespace; got: {}",
+            id
+        );
+    }
+
+    /// Same data shape, all four affected states (MI/WV/ND/PA) — pins that
+    /// the fix isn't accidentally specific to one state's path shape.
+    #[test]
+    fn ocd_entry_to_doc_uses_canonical_bill_dir_for_all_affected_states() {
+        // (display_bill_id, on_disk_dir, dataset, session, log_filename)
+        let cases = [
+            (
+                "SB 0001",
+                "SB0001",
+                "mi-legislation",
+                "mi",
+                "2025-2026",
+                "20250108T000000Z_referred_to_committee_of_the_whole_SB0001.json",
+            ),
+            (
+                "SB 458",
+                "SB458",
+                "wv-legislation",
+                "wv",
+                "2025",
+                "20250307T000000Z_read_2nd_time_SB458.json",
+            ),
+            (
+                "SB 2262",
+                "SB2262",
+                "nd-legislation",
+                "nd",
+                "69",
+                "20250501T000000Z_signed_by_governor_0429_SB2262.json",
+            ),
+            (
+                "HB 1271",
+                "HB1271",
+                "pa-legislation",
+                "pa",
+                "2025-2026",
+                "20250421T040000Z_referred_to_education_HB1271.json",
+            ),
+        ];
+        for (display_id, on_disk_dir, dataset, state, session, log_file) in cases {
+            let entry = serde_json::json!({
+                "log": { "bill_id": display_id, "action": { "description": "PASSED" } },
+                "bill": { "title": "Mock", "identifier": display_id },
+                "sources": {
+                    "log": format!(
+                        "{}/country:us/state:{}/sessions/{}/logs/{}",
+                        dataset, state, session, log_file
+                    ),
+                    "bill": format!(
+                        "../../../../.govbot/cache/{}-deadbeef/country:us/state:{}/sessions/{}/bills/{}/metadata.json",
+                        state, state, session, on_disk_dir
+                    )
+                }
+            });
+            let doc = ocd_entry_to_doc(&entry);
+            let id = doc
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            assert_eq!(
+                id,
+                format!(
+                    "{}/country:us/state:{}/sessions/{}/bills/{}",
+                    dataset, state, session, on_disk_dir
+                ),
+                "{}: id must use the on-disk dir `{}`, not the log's display id `{}`",
+                state,
+                on_disk_dir,
+                display_id
+            );
+            assert!(
+                !id.contains(' '),
+                "{}: id contains whitespace; got: {}",
+                state,
+                id
+            );
+            // Round-trip: the route's bill_id must be the on-disk dir
+            // name, because that's what every downstream path lookup
+            // (`os.path.join(REPOS, doc, ...)`) is going to hit.
+            let route =
+                parse_doc_route(&id).expect("routable doc id even for spaced bill_id inputs");
+            assert_eq!(
+                route.bill_id, on_disk_dir,
+                "{}: parsed bill_id must be the on-disk dir",
+                state
+            );
+        }
+    }
+
+    /// REGRESSION (real-data follow-on of the whitespace fix): MI/ND/PA
+    /// also publish a Layout-1 view for some bills — `sources.log` is
+    /// `.../sessions/<id>/bills/<canonical_dir>/logs/<file>.json` because
+    /// the walker happened to land on the per-bill log directly. In that
+    /// case the stripped path already ends in `/bills/<canonical_dir>`
+    /// (e.g. `bills/HR0163`). But `log.bill_id` is `"HR 0163"` (display
+    /// form). The pre-fix Layout-1 detector compared the stripped path's
+    /// suffix to `log.bill_id` verbatim, which DID NOT match (no space
+    /// vs space), so the code fell through to the Layout-2 branch and
+    /// appended `/bills/HR0163` *again*, producing
+    /// `mi-legislation/.../bills/HR0163/bills/HR0163`. Sample over the
+    /// 55-state corpus: ~50% of mi/nd/pa records exhibited the
+    /// doubled-bills id. The Layout-1 detector must therefore consider
+    /// both the canonical dir name (from `sources.bill`) and
+    /// `log.bill_id`; a match on either means the path already names
+    /// the bill.
+    #[test]
+    fn ocd_entry_to_doc_layout1_with_spaced_log_bill_id_does_not_double_bills_segment() {
+        let entry = serde_json::json!({
+            "log": {
+                // Display form with a space — what MI/ND/PA emit.
+                "bill_id": "HR 0163",
+                "action": { "description": "ANY" }
+            },
+            "bill": { "title": "Mock", "identifier": "HR 0163" },
+            "sources": {
+                // Layout 1 — the walker landed on the per-bill log dir.
+                // The stripped path will end in `/bills/HR0163` (no space).
+                "log": "mi-legislation/country:us/state:mi/sessions/2025-2026/bills/HR0163/logs/20250101T000000Z_foo.json",
+                "bill": "../../../../.govbot/cache/mi-x/country:us/state:mi/sessions/2025-2026/bills/HR0163/metadata.json"
+            }
+        });
+        let doc = ocd_entry_to_doc(&entry);
+        let id = doc.get("id").and_then(|v| v.as_str()).unwrap_or_default();
+        assert_eq!(
+            id, "mi-legislation/country:us/state:mi/sessions/2025-2026/bills/HR0163",
+            "Layout 1 with spaced log.bill_id must not double-append the /bills/<dir> segment"
+        );
+        // The cardinal symptom of the bug: a doubled `bills/<dir>/bills/<dir>` tail.
+        assert!(
+            !id.contains("/bills/HR0163/bills/"),
+            "id must not double the bills segment; got: {}",
+            id
+        );
+        assert!(
+            !id.contains(' '),
+            "id must not contain whitespace; got: {}",
+            id
+        );
+    }
+
+    /// `bill_dir_from_metadata_path` is the helper the fix relies on. Unit-
+    /// test the shape boundary so future refactors don't silently break it.
+    #[test]
+    fn bill_dir_from_metadata_path_extracts_dir_segment() {
+        assert_eq!(
+            bill_dir_from_metadata_path(
+                "../../../../.govbot/cache/mi-x/country:us/state:mi/sessions/2025-2026/bills/HB5109/metadata.json"
+            ),
+            Some("HB5109")
+        );
+        assert_eq!(
+            bill_dir_from_metadata_path(
+                "wy-legislation/country:us/state:wy/sessions/2025/bills/HB0001/metadata.json"
+            ),
+            Some("HB0001")
+        );
+        // Not a bill metadata path — refuse to guess.
+        assert_eq!(
+            bill_dir_from_metadata_path("country:us/state:wy/sessions/2025/metadata.json"),
+            None
+        );
+        assert_eq!(bill_dir_from_metadata_path("metadata.json"), None);
+        assert_eq!(bill_dir_from_metadata_path(""), None);
+    }
+
+    /// When the consumer ran `govbot source --select docs` *without*
+    /// `--join bill`, `sources.bill` is absent and we have no canonical
+    /// dir to lean on. Fall back to `log.bill_id` so the id is still
+    /// routable — even if it carries display-form whitespace. Document
+    /// that this is the advisory path; the production `source --select
+    /// docs` invocation always joins `bill`, so this branch only fires
+    /// for ad-hoc invocations.
+    #[test]
+    fn ocd_entry_to_doc_falls_back_to_log_bill_id_when_bill_join_absent() {
+        let entry = serde_json::json!({
+            "log": { "bill_id": "SB 0001", "action": { "description": "PASSED" } },
+            "sources": {
+                "log": "mi-legislation/country:us/state:mi/sessions/2025-2026/logs/20250108T000000Z_x.json"
+                // No `sources.bill` — `--join bill` was not requested.
+            }
+        });
+        let doc = ocd_entry_to_doc(&entry);
+        assert_eq!(
+            doc.get("id").and_then(|v| v.as_str()),
+            Some("mi-legislation/country:us/state:mi/sessions/2025-2026/bills/SB 0001"),
+            "without sources.bill we fall back to log.bill_id (advisory; may carry whitespace)"
         );
     }
 
