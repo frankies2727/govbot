@@ -1,11 +1,16 @@
-//! Per-bill tag-file persistence types.
+//! Per-bill tag-file persistence types — the on-disk `.tag.json` format.
 //!
-//! govbot no longer classifies bills itself — classification is delegated to
-//! `fastclass` (an external transform). What remains here is the on-disk
-//! `.tag.json` format: `govbot apply` deserializes a `fastclass classify`
-//! result and writes these structs into the dataset; `govbot publish` reads
-//! them back. The ONNX embedding machinery that used to live in this module
-//! has been removed.
+//! `govbot apply` (the apply sink of `govbot source --select docs |
+//! fastclass classify - | govbot apply`) deserializes a `fastclass classify`
+//! result and writes these structs into `<project>/tags/...`; `govbot
+//! publish` reads them back as input to the publishers.
+//!
+//! This module used to be `embeddings.rs` and housed the in-process ONNX
+//! embedding pipeline. govbot no longer classifies bills itself —
+//! classification is now delegated to `fastclass` over a process boundary
+//! (see `schemas/STREAM_PROTOCOL.md`) — so the ONNX machinery has been
+//! removed and what remains is just the tag-file shape. Renamed to
+//! `tagfile.rs` to match what it actually contains.
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

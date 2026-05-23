@@ -6,7 +6,6 @@
 pub mod bluesky;
 pub mod cache;
 pub mod config;
-pub mod embeddings;
 pub mod error;
 pub mod filter;
 pub mod git;
@@ -17,6 +16,7 @@ pub mod publish;
 pub mod registry;
 pub mod rss;
 pub mod selectors;
+pub mod tagfile;
 pub mod types;
 pub mod wizard;
 
@@ -24,14 +24,14 @@ pub use config::{
     Command_, Config, ConfigBuilder, JoinOption, Manifest, Publisher, PublisherKind, SortOrder,
     Transform,
 };
-pub use embeddings::{
-    hash_text, BillTagResult, ScoreBreakdown, TagDefinition, TagFile, TagFileMetadata,
-};
 pub use error::{Error, Result};
 pub use filter::{FilterAlias, FilterManager, FilterResult, LogFilter};
 pub use lock::LockFile;
 pub use processor::PipelineProcessor;
 pub use registry::{DatasetEntry, Registry, ResolvedDataset};
+pub use tagfile::{
+    hash_text, BillTagResult, ScoreBreakdown, TagDefinition, TagFile, TagFileMetadata,
+};
 pub use types::{LogContent, LogEntry, Metadata, VoteEventResult};
 
 /// Re-export commonly used types for convenience
