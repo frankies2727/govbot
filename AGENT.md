@@ -63,7 +63,7 @@ govbot remove <datasets...> # remove datasets from govbot.yml
 govbot ls                   # list manifest + locally-cached datasets
 govbot pull <datasets...>   # clone/update datasets (git repos) into the cache
 govbot source               # stream legislative activity as JSON Lines
-govbot apply                # persist fastclass results into the dataset
+govbot apply                # persist fastclass results under <project>/tags/
 govbot publish              # run the manifest's publishers
 govbot run                  # the full pipeline: pull -> source|classify|apply -> publish
 fastclass classify -        # score a JSON-Lines doc stream from stdin
@@ -322,6 +322,9 @@ BLUESKY_APP_PASSWORD=xxxx-xxxx-xxxx-xxxx
 .govbot/
 dist/
 docs/
+# Classification output from `govbot apply` — regenerated each run.
+# Remove this line to commit classification provenance.
+tags/
 # Secrets — never commit.
 .env
 ```
@@ -350,8 +353,17 @@ Project layout:
 - `summarizer/`     — framing prompt for a future summarize stage
 - `.env`            — Bluesky credentials (git-ignored; see `.env.example`)
 
+Tool-managed dirs (all git-ignored by default):
+- `.govbot/`        — the tool's CACHE (cloned datasets, ledgers); the
+                      `node_modules/` equivalent. Never edit by hand;
+                      `rm -rf .govbot/` is always safe.
+- `tags/`           — classification OUTPUT from `govbot apply`
+                      (`tags/<dataset>/country:.../sessions/<id>/<tag>.tag.json`).
+                      Remove `tags/` from `.gitignore` if you want
+                      classification provenance committed.
+- `dist/` / `docs/` — publisher output from `govbot publish`.
+
 To tune the classifier, use the fastclass plugin: `/fastclass:improve`.
-Generated dirs (`.govbot/`, `dist/`, `docs/`) are git-ignored.
 ```
 
 #### `.claude/settings.json` — import the fastclass plugin
@@ -581,5 +593,9 @@ the eval. The improvement loop only ever reads `rolling.yml`.
 - Credentials are environment-only. Never write a secret into `govbot.yml`,
   `.env.example`, or any committed file.
 - Bluesky: dry-run before every first live run after a config change.
-- Generated dirs (`.govbot/`, `dist/`, `docs/`) are git-ignored; the project
-  is a dozen small text files plus tool artifacts.
+- Three tool-managed dirs, each with a distinct role: `.govbot/` is the
+  CACHE (the `node_modules/` equivalent — never edited, fully regenerable),
+  `tags/` is `govbot apply`'s classification OUTPUT
+  (`tags/<dataset>/country:.../sessions/<id>/<tag>.tag.json`), and
+  `dist/` / `docs/` are publisher output. All four are git-ignored by
+  default; the project is a dozen small text files plus tool artifacts.

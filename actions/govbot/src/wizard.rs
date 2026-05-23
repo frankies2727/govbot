@@ -283,9 +283,17 @@ pub fn generate_govbot_yml(datasets: &[String], base_url: &str) -> String {
 /// Write .gitignore with govbot's generated dirs and secret-bearing files.
 ///
 /// Everything under `.govbot/` (cloned datasets, ledgers, lockfile state),
-/// every publisher output dir (`dist/`, `docs/`), and any local `.env` is
-/// untracked. The userland repo is a few dozen text files plus tool artifacts;
-/// the artifacts never belong in git.
+/// every publisher output dir (`dist/`, `docs/`), the classification-output
+/// dir `tags/`, and any local `.env` is untracked. The userland repo is a
+/// few dozen text files plus tool artifacts; the artifacts never belong in
+/// git.
+///
+/// **`tags/` trade-off.** `govbot apply` writes per-tag `.tag.json` files
+/// under `tags/<dataset>/country:.../sessions/<id>/`. The file count grows
+/// with the catalog and most bots regenerate from raw data on every run —
+/// so it is git-ignored by default. Users who want classification
+/// provenance committed (e.g. for offline review or auditability) can
+/// remove the `tags/` line from this file.
 pub fn write_gitignore(cwd: &Path) -> Result<()> {
     let gitignore_path = cwd.join(".gitignore");
     // Single canonical block — easy to grep, easy to update.
@@ -294,6 +302,9 @@ pub fn write_gitignore(cwd: &Path) -> Result<()> {
 .govbot/
 dist/
 docs/
+# Classification output from `govbot apply` — regenerated each run.
+# Remove this line if you want classification provenance committed.
+tags/
 
 # Secrets — never commit
 .env

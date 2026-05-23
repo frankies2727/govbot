@@ -78,7 +78,7 @@ govbot pull all            # clone/update every dataset
 govbot pull il ca ny       # clone/update specific datasets
 govbot source              # stream dataset records as JSON Lines
 govbot source --select docs | fastclass classify - classifier=./classifier | govbot apply
-govbot apply               # persist a fastclass result stream into the dataset
+govbot apply               # persist a fastclass result stream under <project>/tags/
 govbot publish             # run every configured publisher (RSS / HTML / JSON / DuckDB / Bluesky)
 govbot publish --publisher bluesky --dry-run   # ALWAYS dry-run Bluesky first
 govbot run --dry-run       # full pipeline, every publisher dry-run (recommended first run)
@@ -104,6 +104,19 @@ govbot source --select docs | fastclass classify - classifier=./classifier | gov
 references its path. See [`AGENT.md`](AGENT.md) for the end-to-end newsbot
 playbook (make / manage / update) and the [stream protocol](schemas/STREAM_PROTOCOL.md)
 for the wire format.
+
+### Project layout
+
+A govbot project has three tool-managed directories, each with a distinct
+role; all are git-ignored by default:
+
+| Dir | Owner | Contents |
+|---|---|---|
+| `.govbot/` | the tool's **cache** (`node_modules/` equivalent) | cloned datasets, ledgers, sync state. Fully regenerable. Never edit. |
+| `tags/` | `govbot apply` (**classification output**) | `tags/<dataset>/country:.../sessions/<id>/<tag>.tag.json` |
+| `dist/` (or `docs/`) | `govbot publish` (**publisher output**) | RSS / HTML / JSON feeds |
+
+Remove `tags/` from `.gitignore` to commit classification provenance.
 
 # 🏛️ Govbot Legislation Data Catalogs
 

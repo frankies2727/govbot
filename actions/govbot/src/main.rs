@@ -237,17 +237,23 @@ enum Command {
         govbot_dir: Option<String>,
     },
 
-    /// Persist fastclass classification results into the dataset as tag files.
-    /// Reads `fastclass classify` result JSON from stdin — the apply sink of
+    /// Persist fastclass classification results as tag files under the
+    /// project's `tags/` output directory. Reads `fastclass classify` result
+    /// JSON from stdin — the apply sink of
     /// `govbot source --select docs | fastclass classify - | govbot apply` —
-    /// and writes per-tag `.tag.json` files under each bill's session
-    /// directory, the files `govbot publish` turns into feeds. Classification
-    /// itself is done by fastclass; `govbot apply` only stores the results.
+    /// and writes per-tag `.tag.json` files under
+    /// `<project>/tags/<dataset>/country:.../sessions/<id>/`, the files
+    /// `govbot publish` turns into feeds. Classification itself is done by
+    /// fastclass; `govbot apply` only stores the results. `tags/` is a
+    /// project-rooted classification-output dir — peer to `dist/` (publisher
+    /// output) and distinct from `.govbot/` (the tool's regenerable cache).
     Apply {
         /// Optional tag name: persist only this tag's matches
         tag_name: Option<String>,
 
-        /// Output directory (defaults to the directory containing govbot.yml)
+        /// Output directory (default: `<project>/tags/`). Overrides the
+        /// default routing entirely — the dataset short-name is dropped and
+        /// tag files land under `<output-dir>/country:.../sessions/.../tags/`.
         #[arg(long = "output-dir")]
         output_dir: Option<String>,
 
@@ -1161,15 +1167,18 @@ async fn run_source_command(cmd: Command) -> anyhow::Result<()> {
 
                                     // Join tags if requested.
                                     //
-                                    // Wave 6 (`80617ac`) moved tag files from
-                                    // the project root *into* the dataset, so
-                                    // the primary lookup walks up from the log
-                                    // file's actual path to find the dataset's
-                                    // own `tags/` dir. The cwd-rooted layout is
-                                    // kept as a fallback so any pre-existing
-                                    // project-root layouts (and any explicit
-                                    // `--output-dir` overrides that landed
-                                    // there) still resolve.
+                                    // `.govbot/` is the tool's cache — tag
+                                    // files no longer live inside it. The
+                                    // primary lookup is the project-rooted
+                                    // `<project>/tags/<dataset>/...` layout
+                                    // `govbot apply` writes today. Two
+                                    // read-only fallbacks stay live for
+                                    // migration: the in-cache `<session>/
+                                    // tags/` location Bug 6 added, and the
+                                    // cwd-rooted `country:.../sessions/<id>/
+                                    // tags/` layout that pre-dates Bug 1.
+                                    // First non-empty match wins; an empty
+                                    // result on every candidate is silent.
                                     if join_tags {
                                         if let Some(ref bill_id) = bill_id_opt {
                                             let mut matched_tags: serde_json::Map<
@@ -1177,26 +1186,27 @@ async fn run_source_command(cmd: Command) -> anyhow::Result<()> {
                                                 serde_json::Value,
                                             > = serde_json::Map::new();
 
-                                            // Primary: dataset-rooted tags dir
-                                            // sibling of the bills/ dir the log
-                                            // file lives under.
-                                            if let Some(dataset_tags_dir) = resolve_tags_dir(&path)
+                                            let cwd = std::env::current_dir()
+                                                .unwrap_or_else(|_| PathBuf::from("."));
+                                            for candidate in
+                                                resolve_tags_dir_candidates(&path, &cwd)
                                             {
                                                 matched_tags =
-                                                    match_tags_in_dir(&dataset_tags_dir, bill_id);
+                                                    match_tags_in_dir(&candidate, bill_id);
+                                                if !matched_tags.is_empty() {
+                                                    break;
+                                                }
                                             }
 
-                                            // Fallback: legacy project-root
-                                            // layout (`cwd/country:.../state:.../
-                                            // sessions/<id>/tags/`). Only
-                                            // consulted when the dataset-rooted
-                                            // lookup found nothing.
+                                            // Final fallback: pre-Bug-1
+                                            // cwd-rooted layout. Only
+                                            // consulted when the dataset-
+                                            // aware candidates all came up
+                                            // empty.
                                             if matched_tags.is_empty() {
                                                 if let Some((country, state, session_id)) =
                                                     extract_path_info(&source_path_str)
                                                 {
-                                                    let cwd = std::env::current_dir()
-                                                        .unwrap_or_else(|_| PathBuf::from("."));
                                                     let legacy_tags_dir = cwd
                                                         .join(format!("country:{}", country))
                                                         .join(format!("state:{}", state))
@@ -1723,24 +1733,130 @@ fn extract_path_info(path: &str) -> Option<(String, String, String)> {
     Some((country, state, session_id))
 }
 
-/// Resolve the dataset-rooted `tags/` directory for a given log file path.
+/// The session directory of a log file path — the ancestor whose immediate
+/// child is `bills/` — together with the path segments that uniquely place it
+/// inside its dataset.
 ///
-/// Wave 6 (`80617ac`) moved tag files from the project root into the dataset
-/// (`<dataset>/country:.../state:.../sessions/<id>/tags/`). This walks **up**
-/// from the log file path until it finds a directory whose immediate child is
-/// `bills/` — that ancestor is the session dir, and `tags/` is its sibling of
-/// `bills/`. Returns `None` if no such ancestor exists (e.g. a path outside
-/// the canonical dataset layout).
-fn resolve_tags_dir(log_path: &Path) -> Option<PathBuf> {
+/// Why pulled out: `resolve_tags_dir` needs the path twice, once to look at
+/// the project-rooted `tags/<dataset>/...` layout and once for the in-cache
+/// `<session>/tags/` fallback. Computing it in one place keeps both lookups
+/// in sync with the canonical dataset layout.
+struct SessionAnchor {
+    /// The session directory itself (the `bills/`-bearing ancestor).
+    session_dir: PathBuf,
+    /// The dataset's `short_name` — the first path segment under the repos
+    /// dir (e.g. `wy-legislation`). `None` if the path is not inside a
+    /// recognisable `<repos>/<short>/country:.../sessions/...` layout, in
+    /// which case the project-rooted lookup is skipped.
+    dataset: Option<String>,
+    /// The `country:<c>` segment as-is (e.g. `country:us`).
+    country_segment: String,
+    /// The `state:<s>` segment as-is (e.g. `state:wy`).
+    state_segment: String,
+    /// The session id (the segment after `sessions/`).
+    session_id: String,
+}
+
+/// Walk up from `log_path` to its session directory (the `bills/`-bearing
+/// ancestor) and capture every segment needed to plant a tag file under
+/// `<project>/tags/<dataset>/country:.../state:.../sessions/<id>/`. Returns
+/// `None` when the path is not inside the canonical dataset layout.
+fn parse_session_anchor(log_path: &Path) -> Option<SessionAnchor> {
     let mut cursor = log_path.parent();
     while let Some(dir) = cursor {
-        let bills_child = dir.join("bills");
-        if bills_child.is_dir() {
-            return Some(dir.join("tags"));
+        if dir.join("bills").is_dir() {
+            // Found the session dir. Walk *down* its components to recover
+            // the dataset short_name and jurisdiction segments — they are
+            // the same segments `parse_doc_route` extracts on the writer
+            // side, so the two halves stay symmetric.
+            let mut country_segment: Option<String> = None;
+            let mut state_segment: Option<String> = None;
+            let mut session_id: Option<String> = None;
+            let mut dataset: Option<String> = None;
+            let mut prev_was_sessions = false;
+            let mut country_seen = false;
+            for component in dir.components() {
+                let seg = component.as_os_str().to_string_lossy().to_string();
+                if seg.starts_with("country:") {
+                    country_segment = Some(seg.clone());
+                    country_seen = true;
+                } else if seg.starts_with("state:") {
+                    state_segment = Some(seg.clone());
+                } else if seg == "sessions" {
+                    prev_was_sessions = true;
+                    continue;
+                } else if prev_was_sessions {
+                    session_id = Some(seg.clone());
+                }
+                // The dataset short_name is the path segment immediately
+                // before the first `country:` segment. For typical layouts
+                // (`<repos>/<short>/country:.../...`) that is one segment;
+                // we only need the most recent non-pathy segment before
+                // `country:` was first seen.
+                if !country_seen
+                    && !seg.is_empty()
+                    && seg != "/"
+                    && !seg.starts_with("country:")
+                    && !seg.starts_with("state:")
+                    && seg != "sessions"
+                    && seg != "bills"
+                {
+                    dataset = Some(seg);
+                }
+                prev_was_sessions = false;
+            }
+            return Some(SessionAnchor {
+                session_dir: dir.to_path_buf(),
+                dataset,
+                country_segment: country_segment?,
+                state_segment: state_segment?,
+                session_id: session_id?,
+            });
         }
         cursor = dir.parent();
     }
     None
+}
+
+/// Resolve every `tags/`-equivalent directory we are willing to read a tag
+/// file from, in the order the caller should consult them.
+///
+/// `.govbot/` is the tool's cache (the `node_modules/` equivalent) — tag
+/// files belong outside it, in a project-rooted classification-output dir.
+/// The primary lookup is therefore `<project>/tags/<dataset>/country:.../
+/// state:.../sessions/<id>/`. Two fallbacks stay live for migration:
+///
+/// 1. **Primary**: `<project>/tags/<dataset>/country:.../sessions/<id>/`
+///    — where `govbot apply` writes today.
+/// 2. **Fallback A** (Bug 6 / `6cbb12e`): the in-cache
+///    `<session_dir>/tags/` sibling-of-`bills/` — kept read-only so a
+///    working tree mid-migration still resolves.
+/// 3. **Fallback B** (pre-Bug-1): the cwd-rooted
+///    `<cwd>/country:.../state:.../sessions/<id>/tags/` — kept for layouts
+///    that pre-date the dataset-rooted move (and for explicit
+///    `--output-dir` overrides that landed there).
+///
+/// The chain is read-only — `apply` itself never touches anything but the
+/// primary location.
+fn resolve_tags_dir_candidates(log_path: &Path, project_dir: &Path) -> Vec<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Some(anchor) = parse_session_anchor(log_path) {
+        // Primary: <project>/tags/<dataset>/country:.../state:.../sessions/<id>/
+        if let Some(ref dataset) = anchor.dataset {
+            candidates.push(
+                project_dir
+                    .join("tags")
+                    .join(dataset)
+                    .join(&anchor.country_segment)
+                    .join(&anchor.state_segment)
+                    .join("sessions")
+                    .join(&anchor.session_id),
+            );
+        }
+        // Fallback A: in-cache session/tags/ (Bug 6 layout, read-only).
+        candidates.push(anchor.session_dir.join("tags"));
+    }
+    candidates
 }
 
 /// Read every `*.json` / `*.tag.json` file in `tags_dir`, parse each as a
@@ -1832,8 +1948,10 @@ struct BillRoute {
 /// is not a dataset bill path (e.g. a document from a non-govbot source).
 ///
 /// The leading `<dataset>` segment is the dataset's `short_name` (e.g.
-/// `wy-legislation`); it is what lets `govbot apply` route each tag file back
-/// to `<project>/.govbot/repos/<dataset>/` by default.
+/// `wy-legislation`); it is what lets `govbot apply` route each tag file under
+/// `<project>/tags/<dataset>/...` by default — the dataset prefix is what
+/// disambiguates same-named tag files across jurisdictions in a multi-dataset
+/// project.
 fn parse_doc_route(doc: &str) -> Option<BillRoute> {
     let segments: Vec<&str> = doc.split('/').collect();
     let (mut country, mut state, mut session, mut bill_id) = (None, None, None, None);
@@ -1913,8 +2031,14 @@ fn new_tag_file(tag_key: &str, tag_defs: &[govbot::TagDefinition], now: &str) ->
 /// stdin — the apply sink of
 /// `govbot source --select docs | fastclass classify - | govbot apply` — and
 /// for every matched tag writes the bill into the per-tag `.tag.json` file
-/// under the dataset's `sessions/<session>/tags/` directory. Those are the
+/// under `<project>/tags/<dataset>/country:.../sessions/<id>/`. Those are the
 /// files `govbot publish` later turns into feeds.
+///
+/// **Why `tags/` and not `.govbot/`:** `.govbot/` is the tool's cache — the
+/// equivalent of `node_modules/` — and must stay user-edit-free so a fresh
+/// `rm -rf .govbot/` never destroys the bot's classification work. Tag files
+/// are derived classification *outputs*, not cache contents; they live in
+/// their own dedicated, project-rooted directory peer to `dist/`.
 async fn run_apply_command(cmd: Command) -> anyhow::Result<()> {
     let Command::Apply {
         tag_name,
@@ -1927,12 +2051,15 @@ async fn run_apply_command(cmd: Command) -> anyhow::Result<()> {
 
     let current_dir = std::env::current_dir()?;
     // Tag files land under --output-dir when given. When unset, each tag file
-    // is routed back to its source dataset under
-    // `<project>/.govbot/repos/<dataset>/country:.../sessions/.../tags/`
-    // — mirroring the path the bill's `metadata.json` came from — using the
-    // first segment of the fastclass result's `doc` field. The explicit
-    // `--output-dir` override stays a verbatim root for back-compat.
+    // is routed under the project's classification-output directory
+    // `<project>/tags/<dataset>/country:.../sessions/.../<tag>.tag.json`
+    // — the dataset short_name comes from the first segment of the fastclass
+    // result's `doc` field, mirroring where the bill's `metadata.json` came
+    // from. The explicit `--output-dir` override stays a verbatim root (the
+    // dataset prefix is dropped), which is the back-compat escape hatch for
+    // callers that want to write into a custom layout.
     let explicit_output_dir = output_dir.as_ref().map(PathBuf::from);
+    let default_tags_root = current_dir.join("tags");
 
     // The taxonomy now lives in a fastclass classifier bundle, not in
     // govbot.yml — each `.tag.json` is stamped with a stub `tag_config`
@@ -1992,22 +2119,26 @@ async fn run_apply_command(cmd: Command) -> anyhow::Result<()> {
 
         // Resolve where this bill's tag files land. With an explicit
         // `--output-dir`, that path is the root and the dataset short_name is
-        // dropped (back-compat). With no override, route the file back to its
-        // source dataset under `<project>/.govbot/repos/<dataset>/...` so the
-        // file lands alongside the bill's `metadata.json`. If the `doc` id
-        // lacks a recognisable dataset prefix (a non-govbot source), fall
-        // back to the project directory so the record is still persisted.
+        // dropped (back-compat escape hatch). With no override, route the file
+        // under the project's `tags/<dataset>/...` output dir so the dataset
+        // prefix disambiguates same-named tags across jurisdictions. If the
+        // `doc` id lacks a recognisable dataset prefix (a non-govbot source),
+        // fall back to a no-prefix `tags/` so the record is still persisted —
+        // never write into `.govbot/`, which is the tool's cache.
         let base_output_dir = match (&explicit_output_dir, &route.dataset) {
             (Some(root), _) => root.clone(),
-            (None, Some(dataset)) => current_dir.join(".govbot").join("repos").join(dataset),
-            (None, None) => current_dir.clone(),
+            (None, Some(dataset)) => default_tags_root.join(dataset),
+            (None, None) => default_tags_root.clone(),
         };
+        // Inside the dataset prefix, mirror the source's jurisdiction path
+        // exactly — no trailing `/tags/` segment, because the project-level
+        // `tags/` directory already names the kind. The shape on disk is
+        // `<root>/<dataset>/country:.../state:.../sessions/<id>/<tag>.tag.json`.
         let tags_dir = base_output_dir
             .join(format!("country:{}", route.country))
             .join(format!("state:{}", route.state))
             .join("sessions")
-            .join(&route.session)
-            .join("tags");
+            .join(&route.session);
         fs::create_dir_all(&tags_dir)?;
         written_dirs.insert(base_output_dir.clone());
 
@@ -2049,7 +2180,7 @@ async fn run_apply_command(cmd: Command) -> anyhow::Result<()> {
         explicit_output_dir
             .as_ref()
             .map(|d| d.display().to_string())
-            .unwrap_or_else(|| current_dir.display().to_string())
+            .unwrap_or_else(|| default_tags_root.display().to_string())
     } else {
         written_dirs
             .iter()
@@ -2584,8 +2715,8 @@ mod tests {
     use super::*;
 
     /// A typical `govbot source --select docs` id — the leading dataset
-    /// `short_name` is what `govbot apply` uses to route the `.tag.json` back
-    /// to `<project>/.govbot/repos/<dataset>/...` by default.
+    /// `short_name` is what `govbot apply` uses to route the `.tag.json` under
+    /// `<project>/tags/<dataset>/...` by default.
     #[test]
     fn parse_doc_route_extracts_dataset_prefix() {
         let route =
@@ -2616,17 +2747,20 @@ mod tests {
         assert!(parse_doc_route("wy-legislation/country:us").is_none());
     }
 
-    /// Regression for the Wave 6 follow-up: `source --join tags` must read
-    /// from the dataset-rooted `tags/` dir (sibling of the `bills/` the log
-    /// lives under), not from a cwd-rooted layout. After `80617ac` moved
-    /// `govbot apply` to write tag files into the dataset, the consumer side
-    /// stayed pointed at the old project-root path and the publishers saw 0
-    /// entries. `resolve_tags_dir` is what closes that loop.
+    /// `.govbot/` is the cache; tag files belong outside it in the project-
+    /// rooted `tags/` output dir. The resolver's primary candidate must
+    /// therefore be `<project>/tags/<dataset>/country:.../state:.../sessions/
+    /// <id>/`, with the in-cache `<session>/tags/` location kept only as a
+    /// read-only fallback for working trees mid-migration. This regression
+    /// pins both — Bug 1's revisit must not silently restore the cache as
+    /// the primary location.
     #[test]
-    fn resolve_tags_dir_finds_sibling_of_bills() {
+    fn resolve_tags_dir_candidates_prefer_project_tags_then_cache_fallback() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        let session = tmp
-            .path()
+        let project = tmp.path().join("project");
+        let session = project
+            .join(".govbot")
+            .join("repos")
             .join("wy-legislation")
             .join("country:us")
             .join("state:wy")
@@ -2639,23 +2773,80 @@ mod tests {
             .join("2025-01-15T12:00:00Z.json");
         fs::create_dir_all(log_path.parent().unwrap()).unwrap();
         fs::write(&log_path, "{}").unwrap();
-        // The `bills/` sibling must exist for the resolver to find this
-        // ancestor — that is the whole signal that says "this is a session
-        // dir". Creating the log under `bills/HB0001/logs/` already does it.
 
-        let resolved = resolve_tags_dir(&log_path).expect("resolver should find a tags dir");
-        assert_eq!(resolved, session.join("tags"));
+        let candidates = resolve_tags_dir_candidates(&log_path, &project);
+        // Primary is the project-rooted output dir.
+        assert_eq!(
+            candidates.first().expect("primary candidate"),
+            &project
+                .join("tags")
+                .join("wy-legislation")
+                .join("country:us")
+                .join("state:wy")
+                .join("sessions")
+                .join("2025"),
+        );
+        // Fallback A is the Bug-6 in-cache layout — read-only for migration.
+        assert!(candidates.iter().any(|c| c == &session.join("tags")));
+        // And critically: the cache is NOT the primary location.
+        assert_ne!(candidates.first().unwrap(), &session.join("tags"));
     }
 
     /// A log file outside any dataset layout (no `bills/` ancestor) yields
-    /// `None`, letting the caller fall back to the legacy cwd-rooted lookup.
+    /// no candidates, letting the caller fall back to the legacy cwd-rooted
+    /// lookup.
     #[test]
-    fn resolve_tags_dir_returns_none_outside_dataset_layout() {
+    fn resolve_tags_dir_candidates_empty_outside_dataset_layout() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let stray = tmp.path().join("loose").join("file.json");
         fs::create_dir_all(stray.parent().unwrap()).unwrap();
         fs::write(&stray, "{}").unwrap();
-        assert!(resolve_tags_dir(&stray).is_none());
+        assert!(resolve_tags_dir_candidates(&stray, tmp.path()).is_empty());
+    }
+
+    /// Dataset isolation — the whole reason the `<short>` segment lives at
+    /// the top of `tags/`. Two datasets sharing a `country:us/state:xx`
+    /// jurisdiction must write the same-named tag file to *different* files
+    /// on disk, keyed by short_name, so a project tracking multiple
+    /// jurisdictions never has one dataset's classification clobber
+    /// another's.
+    #[test]
+    fn tag_paths_are_dataset_isolated() {
+        // Synthesise the per-dataset destinations the way `run_apply_command`
+        // does, against two short_names that share a country/state/session.
+        let project = std::path::PathBuf::from("/tmp/project");
+        let tags_root = project.join("tags");
+
+        let short_a = "wy-legislation";
+        let short_b = "wy-counties";
+        let country = "country:us";
+        let state = "state:wy";
+        let session = "2025";
+        let tag = "clean_energy";
+
+        let path_a = tags_root
+            .join(short_a)
+            .join(country)
+            .join(state)
+            .join("sessions")
+            .join(session)
+            .join(format!("{}.tag.json", tag));
+        let path_b = tags_root
+            .join(short_b)
+            .join(country)
+            .join(state)
+            .join("sessions")
+            .join(session)
+            .join(format!("{}.tag.json", tag));
+
+        assert_ne!(path_a, path_b, "dataset prefix must split the tag file");
+        // Both must share the `tags/` prefix — the project's
+        // classification-output dir — never `.govbot/`.
+        assert!(path_a.starts_with(&tags_root));
+        assert!(path_b.starts_with(&tags_root));
+        let govbot_cache = project.join(".govbot");
+        assert!(!path_a.starts_with(&govbot_cache));
+        assert!(!path_b.starts_with(&govbot_cache));
     }
 
     /// End-to-end of the helper: a tag file in the dataset-rooted `tags/`
