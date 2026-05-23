@@ -177,6 +177,11 @@ publish:
     type: bluesky
     select: [transit_funding, transit_safety]   # tag names from classifier.yml
     min_score: 0.6        # calibrated final_score threshold; 0..1
+    # base_url is the prefix used by the `{link}` placeholder below — set it
+    # to wherever the bill page actually lives (e.g. the GitHub Pages URL of
+    # the rss/html publisher), otherwise `{link}` falls back to the bill's
+    # bill.sources[0].url (if any) or renders empty.
+    base_url: "https://<user>.github.io/<repo>"
     post_template: "{title}\n\n{tags} · {link}"
     # ledger: .govbot/bluesky-bluesky.ledger   # default; tracks posted bills
 
@@ -422,6 +427,7 @@ Under `govbot.yml: publish:` (see the template in §1.3):
 | `type: bluesky` | selects the Bluesky publisher |
 | `select` | tag names to post — must exist in the classifier bundle |
 | `min_score` | minimum calibrated `final_score` (0..1) to post; default `0.6` |
+| `base_url` | prefix used to render `{link}` in `post_template`; same shape as the rss/html publishers' `base_url`. Falls back to `bill.sources[0].url` when unset |
 | `post_template` | post text; placeholders `{title} {tags} {link} {identifier} {session} {score}`; truncated to 300 chars |
 | `ledger` | posted-state ledger path; default `.govbot/bluesky-<name>.ledger` |
 

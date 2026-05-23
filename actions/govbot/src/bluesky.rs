@@ -67,7 +67,7 @@ pub fn run_bluesky(job: &PublishJob, dry_run: bool) -> Result<()> {
         .entries
         .iter()
         .filter(|e| record_clears_threshold(e, &select, min_score))
-        .map(|e| render_post(e, p.post_template.as_deref()))
+        .map(|e| render_post(e, p.post_template.as_deref(), p.base_url.as_deref()))
         .collect();
 
     if posts.is_empty() {
@@ -212,7 +212,13 @@ fn record_clears_threshold(entry: &Value, select: &[String], min_score: f64) -> 
 
 /// Render a record into post text, applying the template and truncating to
 /// the Bluesky character limit.
-fn render_post(entry: &Value, template: Option<&str>) -> RenderedPost {
+///
+/// `base_url` — the publisher's `base_url` field — is the prefix prepended to
+/// the bill's source-relative path when assembling `{link}`. Mirrors the
+/// rss/html publishers' shape so a user can put a public URL into post text.
+/// If `base_url` is `None`, the link falls back to the bill's
+/// `bill.sources[0].url` (if present); otherwise `{link}` renders empty.
+fn render_post(entry: &Value, template: Option<&str>, base_url: Option<&str>) -> RenderedPost {
     let id = crate::rss::extract_guid(entry);
     let template = template.unwrap_or(DEFAULT_TEMPLATE);
 
@@ -222,7 +228,7 @@ fn render_post(entry: &Value, template: Option<&str>) -> RenderedPost {
         .and_then(|t| t.as_object())
         .map(|m| m.keys().cloned().collect::<Vec<_>>().join(", "))
         .unwrap_or_default();
-    let link = crate::rss::extract_link(entry, None).unwrap_or_default();
+    let link = crate::rss::extract_link(entry, base_url).unwrap_or_default();
     let identifier = entry
         .get("bill")
         .and_then(|b| b.get("identifier"))
@@ -614,10 +620,58 @@ mod tests {
             "bill": { "title": "Renewable energy storage act", "identifier": "HB 1" },
             "tags": { "clean_energy": { "final_score": 0.92 } }
         });
-        let post = render_post(&entry, Some("{title} [{identifier}] {tags} {score}"));
+        let post = render_post(&entry, Some("{title} [{identifier}] {tags} {score}"), None);
         assert!(post.text.contains("Renewable energy storage act"));
         assert!(post.text.contains("[HB 1]"));
         assert!(post.text.contains("clean_energy"));
         assert!(post.text.contains("0.92"));
+    }
+
+    /// `{link}` renders the publisher's `base_url` joined to the bill's
+    /// source-log path — same shape as the rss/html publishers. Before the
+    /// fix, bluesky passed `None` and `{link}` rendered empty.
+    #[test]
+    fn render_link_uses_publisher_base_url() {
+        let entry = json!({
+            "id": "wy-legislation/.../HB0001",
+            "bill": { "title": "Wind energy permitting act", "identifier": "HB 1" },
+            "sources": { "bill": "wy-legislation/.../HB0001/metadata.json" },
+            "tags": { "clean_energy": { "final_score": 0.91 } }
+        });
+        let post = render_post(
+            &entry,
+            Some("{title} {link}"),
+            Some("https://example.org/climate-tracker"),
+        );
+        assert!(
+            post.text.contains(
+                "https://example.org/climate-tracker/wy-legislation/.../HB0001/metadata.json"
+            ),
+            "expected base_url to be prepended to source path; got: {}",
+            post.text
+        );
+    }
+
+    /// Without a configured `base_url`, `{link}` falls back to the bill's
+    /// `bill.sources[0].url` (when present) — preserves the historical
+    /// shape and gives manifest authors a sensible default before they pick
+    /// a base_url.
+    #[test]
+    fn render_link_falls_back_to_bill_source_url() {
+        let entry = json!({
+            "id": "wy-legislation/.../HB0001",
+            "bill": {
+                "title": "Solar tax-credit act",
+                "identifier": "HB 1",
+                "sources": [{ "url": "https://wyoleg.gov/2025/Bills/HB0001" }]
+            },
+            "tags": { "clean_energy": { "final_score": 0.9 } }
+        });
+        let post = render_post(&entry, Some("{title} -> {link}"), None);
+        assert!(
+            post.text.contains("https://wyoleg.gov/2025/Bills/HB0001"),
+            "expected bill.sources[0].url to render as {{link}}; got: {}",
+            post.text
+        );
     }
 }

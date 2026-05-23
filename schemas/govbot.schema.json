@@ -98,7 +98,7 @@
           }
         },
         "base_url": {
-          "description": "Base URL for generated links (required for rss/html on GitHub Pages -- should match the GitHub Pages URL).",
+          "description": "Base URL for generated links. Required for rss/html (e.g. the GitHub Pages URL). Optional for bluesky -- when set, it is the prefix used to render the '{link}' placeholder in 'post_template'; when omitted, '{link}' falls back to the bill's 'bill.sources[0].url' (or renders empty).",
           "type": "string",
           "format": "uri"
         },
