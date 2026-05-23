@@ -1,4 +1,5 @@
 use crate::config::{Command_, Manifest, Transform};
+use crate::git::repo_dir_name;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -48,40 +49,68 @@ pub fn run_pipeline(config_path: &Path, govbot_dir: Option<&str>, dry_run: bool)
             .map(|mut d| d.next().is_some())
             .unwrap_or(false);
 
+    // Classify each manifest dataset: is the project-local seed already
+    // populated for it? If every declared dataset has a non-empty
+    // project-local directory under `repos/`, the pull substep is a no-op —
+    // skip it (and the shared `~/.govbot/cache/` write the registry-driven
+    // pull would attempt) so a sandbox / read-only HOME does not error out a
+    // run that has all the data it needs sitting right there.
+    let locally_seeded: Vec<&String> = manifest
+        .datasets
+        .iter()
+        .filter(|name| name.as_str() != "all" && is_local_seed(&repos_dir, name))
+        .collect();
+    let all_locally_seeded =
+        !manifest.datasets.is_empty() && locally_seeded.len() == manifest.datasets.len();
+
     // Step 1: pull or update datasets.
     eprintln!();
     eprintln!(
         "=== Step 1/3: {} datasets ===",
-        if has_repos { "Updating" } else { "Pulling" }
+        if all_locally_seeded {
+            "Using local seed for"
+        } else if has_repos {
+            "Updating"
+        } else {
+            "Pulling"
+        }
     );
     eprintln!();
 
-    let pull_status = {
-        let mut cmd = Command::new(&govbot_bin);
-        cmd.arg("pull");
-        if !has_repos {
-            // Initial pull: clone the manifest's datasets.
-            for dataset in &manifest.datasets {
-                cmd.arg(dataset);
+    if all_locally_seeded {
+        for name in &locally_seeded {
+            let seed = repos_dir.join(seed_dir_name(name));
+            eprintln!("📂 using local seed: {}", seed.display());
+        }
+        // Skip the cache-touching pull subprocess entirely.
+    } else {
+        let pull_status = {
+            let mut cmd = Command::new(&govbot_bin);
+            cmd.arg("pull");
+            if !has_repos {
+                // Initial pull: clone the manifest's datasets.
+                for dataset in &manifest.datasets {
+                    cmd.arg(dataset);
+                }
             }
+            if let Some(d) = govbot_dir {
+                cmd.arg("--govbot-dir").arg(d);
+            }
+            cmd.current_dir(cwd)
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status()
+        };
+        match pull_status {
+            Ok(status) if !status.success() => {
+                eprintln!("⚠️  Pull/update had errors (continuing anyway)");
+            }
+            Err(e) => {
+                eprintln!("⚠️  Failed to run pull: {} (continuing anyway)", e);
+            }
+            _ => {}
         }
-        if let Some(d) = govbot_dir {
-            cmd.arg("--govbot-dir").arg(d);
-        }
-        cmd.current_dir(cwd)
-            .stdin(Stdio::inherit())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .status()
-    };
-    match pull_status {
-        Ok(status) if !status.success() => {
-            eprintln!("⚠️  Pull/update had errors (continuing anyway)");
-        }
-        Err(e) => {
-            eprintln!("⚠️  Failed to run pull: {} (continuing anyway)", e);
-        }
-        _ => {}
     }
 
     // Step 2: run the transform DAG (source | transform... | apply).
@@ -336,4 +365,62 @@ fn run_transform_dag(
     all_ok &= source_status.success();
 
     Ok(all_ok)
+}
+
+/// Map a manifest dataset id to the on-disk directory name under `repos/`.
+///
+/// A manifest id can be a bare jurisdiction code (`wy`) — which the registry
+/// resolves to a `short_name`, then `repo_dir_name` suffixes (`wy-legislation`)
+/// — or it can already match the on-disk dir name. We try the suffixed form
+/// first; the raw id is the fallback for the (rare) namespaced-id case.
+fn seed_dir_name(manifest_id: &str) -> String {
+    // Strip a `namespace/` prefix (`us-legislation/wy` -> `wy`) so the
+    // suffixed form matches `wy-legislation`.
+    let bare = manifest_id.rsplit('/').next().unwrap_or(manifest_id);
+    repo_dir_name(bare)
+}
+
+/// True when `<repos_dir>/<seed_dir_name(name)>/` (or the raw name) exists and
+/// has at least one entry. The directory walks `govbot source` does for the
+/// dataset will succeed iff this is the case.
+fn is_local_seed(repos_dir: &Path, manifest_id: &str) -> bool {
+    let candidate1 = repos_dir.join(seed_dir_name(manifest_id));
+    let candidate2 = repos_dir.join(manifest_id);
+    [candidate1, candidate2]
+        .into_iter()
+        .any(|p| dir_has_entries(&p))
+}
+
+/// True when `p` is a directory (or a symlink resolving to one) with at least
+/// one child entry.
+fn dir_has_entries(p: &Path) -> bool {
+    std::fs::read_dir(p)
+        .map(|mut it| it.next().is_some())
+        .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `govbot run` should detect a project-local dataset seed
+    /// (`.govbot/repos/<short>/`) and skip the cache-touching pull substep.
+    /// We test the detector — the substep skip itself is exercised by the
+    /// integration repro in the bug 3 PR description.
+    #[test]
+    fn is_local_seed_detects_populated_dir() {
+        let tmp = tempfile::tempdir().expect("tmpdir");
+        let repos = tmp.path();
+        // Empty repos/: no seed.
+        assert!(!is_local_seed(repos, "wy"));
+
+        // Create the expected dataset dir with a file inside.
+        let seed = repos.join("wy-legislation");
+        std::fs::create_dir_all(&seed).unwrap();
+        std::fs::write(seed.join("data.json"), b"{}").unwrap();
+        assert!(is_local_seed(repos, "wy"));
+
+        // Namespaced id — still finds the suffixed dir.
+        assert!(is_local_seed(repos, "us-legislation/wy"));
+    }
 }
