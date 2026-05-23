@@ -1738,6 +1738,10 @@ struct FastclassFusion {
 /// A bill's location in the dataset, parsed from a fastclass result's `doc`
 /// id — which `govbot source --select docs` set to the bill's directory path.
 struct BillRoute {
+    /// The dataset's `short_name` — the path segment before `country:<c>` in
+    /// the doc id (e.g. `wy-legislation`). `None` if the doc id has no
+    /// recognisable prefix.
+    dataset: Option<String>,
     country: String,
     state: String,
     session: String,
@@ -1745,15 +1749,23 @@ struct BillRoute {
 }
 
 /// Parse a `doc` id of the form
-/// `<repo>/country:<c>/state:<s>/sessions/<session>/bills/<bill_id>` into the
+/// `<dataset>/country:<c>/state:<s>/sessions/<session>/bills/<bill_id>` into the
 /// pieces needed to place its `.tag.json` file. Returns `None` for any id that
 /// is not a dataset bill path (e.g. a document from a non-govbot source).
+///
+/// The leading `<dataset>` segment is the dataset's `short_name` (e.g.
+/// `wy-legislation`); it is what lets `govbot apply` route each tag file back
+/// to `<project>/.govbot/repos/<dataset>/` by default.
 fn parse_doc_route(doc: &str) -> Option<BillRoute> {
     let segments: Vec<&str> = doc.split('/').collect();
     let (mut country, mut state, mut session, mut bill_id) = (None, None, None, None);
+    let mut country_idx: Option<usize> = None;
     for (i, seg) in segments.iter().enumerate() {
         if let Some(c) = seg.strip_prefix("country:") {
             country = Some(c.to_string());
+            if country_idx.is_none() {
+                country_idx = Some(i);
+            }
         } else if let Some(s) = seg.strip_prefix("state:") {
             state = Some(s.to_string());
         } else if *seg == "sessions" {
@@ -1762,7 +1774,24 @@ fn parse_doc_route(doc: &str) -> Option<BillRoute> {
             bill_id = segments.get(i + 1).map(|s| s.to_string());
         }
     }
+    // Anything sitting in front of `country:<c>` is the dataset short_name.
+    // For today's `<dataset>/country:<c>/...` shape that is exactly one
+    // segment, but tolerate nested prefixes by joining everything before the
+    // `country:` segment (skipping empties from a leading `/`).
+    let dataset = country_idx.and_then(|i| {
+        let prefix: Vec<&str> = segments[..i]
+            .iter()
+            .copied()
+            .filter(|s| !s.is_empty())
+            .collect();
+        if prefix.is_empty() {
+            None
+        } else {
+            Some(prefix.join("/"))
+        }
+    });
     Some(BillRoute {
+        dataset,
         country: country?,
         state: state?,
         session: session?,
@@ -1819,12 +1848,13 @@ async fn run_apply_command(cmd: Command) -> anyhow::Result<()> {
     };
 
     let current_dir = std::env::current_dir()?;
-    // Tag files land under --output-dir when given, otherwise the current
-    // directory (which, for a govbot project, holds govbot.yml).
-    let base_output_dir = output_dir
-        .as_ref()
-        .map(PathBuf::from)
-        .unwrap_or_else(|| current_dir.clone());
+    // Tag files land under --output-dir when given. When unset, each tag file
+    // is routed back to its source dataset under
+    // `<project>/.govbot/repos/<dataset>/country:.../sessions/.../tags/`
+    // — mirroring the path the bill's `metadata.json` came from — using the
+    // first segment of the fastclass result's `doc` field. The explicit
+    // `--output-dir` override stays a verbatim root for back-compat.
+    let explicit_output_dir = output_dir.as_ref().map(PathBuf::from);
 
     // The taxonomy now lives in a fastclass classifier bundle, not in
     // govbot.yml — each `.tag.json` is stamped with a stub `tag_config`
@@ -1838,6 +1868,9 @@ async fn run_apply_command(cmd: Command) -> anyhow::Result<()> {
     let mut skipped = 0usize;
 
     eprintln!("Reading fastclass classification results from stdin...");
+    // Track per-dataset write counts so the final summary reflects where the
+    // tag files actually landed.
+    let mut written_dirs: std::collections::BTreeSet<PathBuf> = Default::default();
     for line_result in reader.lines() {
         let line = line_result?;
         let line = line.trim();
@@ -1879,6 +1912,18 @@ async fn run_apply_command(cmd: Command) -> anyhow::Result<()> {
             continue;
         }
 
+        // Resolve where this bill's tag files land. With an explicit
+        // `--output-dir`, that path is the root and the dataset short_name is
+        // dropped (back-compat). With no override, route the file back to its
+        // source dataset under `<project>/.govbot/repos/<dataset>/...` so the
+        // file lands alongside the bill's `metadata.json`. If the `doc` id
+        // lacks a recognisable dataset prefix (a non-govbot source), fall
+        // back to the project directory so the record is still persisted.
+        let base_output_dir = match (&explicit_output_dir, &route.dataset) {
+            (Some(root), _) => root.clone(),
+            (None, Some(dataset)) => current_dir.join(".govbot").join("repos").join(dataset),
+            (None, None) => current_dir.clone(),
+        };
         let tags_dir = base_output_dir
             .join(format!("country:{}", route.country))
             .join(format!("state:{}", route.state))
@@ -1886,6 +1931,7 @@ async fn run_apply_command(cmd: Command) -> anyhow::Result<()> {
             .join(&route.session)
             .join("tags");
         fs::create_dir_all(&tags_dir)?;
+        written_dirs.insert(base_output_dir.clone());
 
         for (tag_key, final_score) in matched {
             let tag_path = tags_dir.join(format!("{}.tag.json", tag_key));
@@ -1921,11 +1967,21 @@ async fn run_apply_command(cmd: Command) -> anyhow::Result<()> {
         written += 1;
     }
 
+    let dirs_summary = if written_dirs.is_empty() {
+        explicit_output_dir
+            .as_ref()
+            .map(|d| d.display().to_string())
+            .unwrap_or_else(|| current_dir.display().to_string())
+    } else {
+        written_dirs
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
     eprintln!(
         "\n✅ Persisted {} tagged bill(s) under {}; skipped {} entr(ies).",
-        written,
-        base_output_dir.display(),
-        skipped
+        written, dirs_summary, skipped
     );
     Ok(())
 }
@@ -2439,5 +2495,43 @@ async fn main() -> anyhow::Result<()> {
             }
             govbot::pipeline::run_pipeline(&config_path, None)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A typical `govbot source --select docs` id — the leading dataset
+    /// `short_name` is what `govbot apply` uses to route the `.tag.json` back
+    /// to `<project>/.govbot/repos/<dataset>/...` by default.
+    #[test]
+    fn parse_doc_route_extracts_dataset_prefix() {
+        let route =
+            parse_doc_route("wy-legislation/country:us/state:wy/sessions/2025/bills/HB0001")
+                .expect("dataset path should parse");
+        assert_eq!(route.dataset.as_deref(), Some("wy-legislation"));
+        assert_eq!(route.country, "us");
+        assert_eq!(route.state, "wy");
+        assert_eq!(route.session, "2025");
+        assert_eq!(route.bill_id, "HB0001");
+    }
+
+    /// A doc id with no dataset prefix — `apply` falls back to the project
+    /// dir rather than dropping the record on the floor.
+    #[test]
+    fn parse_doc_route_handles_missing_dataset_prefix() {
+        let route = parse_doc_route("country:us/state:wy/sessions/2025/bills/HB0001")
+            .expect("dataset path without prefix should still parse");
+        assert!(route.dataset.is_none());
+        assert_eq!(route.bill_id, "HB0001");
+    }
+
+    /// A non-bill doc id (e.g. a future stream-kind) — `None` so `apply`
+    /// skips the record with a warning.
+    #[test]
+    fn parse_doc_route_rejects_non_bill_ids() {
+        assert!(parse_doc_route("just-some-other-id").is_none());
+        assert!(parse_doc_route("wy-legislation/country:us").is_none());
     }
 }
