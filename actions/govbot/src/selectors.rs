@@ -21,6 +21,61 @@ pub fn ocd_files_select_default(value: &serde_json::Value) -> String {
         .join(" ")
 }
 
+/// Extract the OCD `subject:` array — the gold-standard structured topic
+/// classification a human OCD scraper assigned to the bill.
+///
+/// This is the input the `docs` projection adds as an optional `subjects`
+/// field so downstream transforms (e.g. fastclass's `concept_match` matcher)
+/// can use the controlled-vocabulary signal directly instead of re-deriving
+/// it from the bill text.
+///
+/// Returns:
+///   - `Some(non-empty Vec)` when `metadata.json` has a `subject:` array with
+///     at least one non-empty string.
+///   - `None` when:
+///       - the entry has no bill metadata join (`--join bill` not requested),
+///       - the bill metadata has no `subject:` key,
+///       - the `subject:` array is empty (`[]`), or
+///       - every element is a blank string.
+///
+/// **Why empty == None.** Many states populate `subject:` for some bills and
+/// leave it `[]` for others; emitting `"subjects": []` would conflate
+/// "no signal" with "explicitly no subjects" and force the consumer to
+/// distinguish them. Omitting the field entirely is the unambiguous
+/// "no signal" form per STREAM_PROTOCOL §1.
+pub fn ocd_files_extract_subjects(value: &serde_json::Value) -> Option<Vec<String>> {
+    let bill = bill_object(value)?;
+    let raw = bill.get("subject")?.as_array()?;
+    let subjects: Vec<String> = raw
+        .iter()
+        .filter_map(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if subjects.is_empty() {
+        None
+    } else {
+        Some(subjects)
+    }
+}
+
+/// Find the bill `metadata.json` object inside an entry, mirroring how
+/// `collect_bill_text` routes between the three wrapping shapes:
+///   - `{ "bill": { ... } }` — the joined form
+///   - `{ "log": { ... } }`  — bare log; no bill metadata available
+///   - `{ ... }`              — the map *is* a bill metadata.json
+fn bill_object(value: &serde_json::Value) -> Option<&serde_json::Map<String, serde_json::Value>> {
+    let map = value.as_object()?;
+    if let Some(bill) = map.get("bill").and_then(|v| v.as_object()) {
+        return Some(bill);
+    }
+    if map.contains_key("log") {
+        // Bare log entry — `subject:` lives on the bill, which isn't joined.
+        return None;
+    }
+    Some(map)
+}
+
 /// Append every text-bearing string of an OCD-files value into `texts`.
 fn collect_bill_text(value: &serde_json::Value, texts: &mut Vec<String>) {
     match value {

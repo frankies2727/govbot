@@ -17,7 +17,7 @@ boundaries** (newline-delimited JSON on stdio), never as linked libraries.
 **newline-delimited JSON** — one object per line, UTF-8, `\n`-terminated:
 
 ```json
-{"id": "<opaque string>", "text": "<string>", "kind": "docs"}
+{"id": "<opaque string>", "text": "<string>", "kind": "docs", "subjects": ["ENERGY", "ENVIRONMENT"]}
 ```
 
 - **`id`** — an opaque routing key. The transform treats it as opaque and **echoes it
@@ -28,6 +28,18 @@ boundaries** (newline-delimited JSON on stdio), never as linked libraries.
 - **`kind`** — **required**. Tags the stream record type (`docs` today; future
   `summary`, etc.). A transform that does not recognize a `kind` **passes the record
   through untouched** rather than erroring.
+- **`subjects`** — **optional**. When the source is an OCD-files bill whose
+  `metadata.json` carries a non-empty `subject:` array (e.g. `["ENERGY",
+  "ENVIRONMENT", "TAXATION"]`), govbot's `docs` projection surfaces those tags
+  here verbatim. These are gold-standard structured classifications assigned
+  by human OCD scrapers and are the canonical input a `concept_match`-style
+  matcher should consume rather than re-deriving topic signals from `text`.
+  The field is **omitted entirely** when the bill has no `subject:` key, when
+  the array is empty (`[]`), or when every element is blank — "no signal"
+  is unambiguous, so consumers never have to distinguish "absent" from
+  "explicitly empty". Bare log records (no bill metadata joined) also omit
+  it. Transforms that don't know about `subjects` ignore it; the stream
+  contract is additive.
 
 A transform reads this stream line-by-line and emits one result line per input line.
 

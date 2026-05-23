@@ -5,7 +5,7 @@ use govbot::git;
 use govbot::lock::LockFile;
 use govbot::publish::{deduplicate_entries, filter_by_tags, load_manifest, sort_by_timestamp};
 use govbot::registry::Registry;
-use govbot::selectors::ocd_files_select_default;
+use govbot::selectors::{ocd_files_extract_subjects, ocd_files_select_default};
 use govbot::{hash_text, BillTagResult, TagFile, TagFileMetadata};
 use jwalk::WalkDir;
 use std::collections::HashMap;
@@ -914,6 +914,13 @@ async fn run_delete_command(cmd: Command) -> anyhow::Result<()> {
 ///
 /// `text` is the **full** bill text assembled from `metadata.json` (not just
 /// titles) — the `docs` projection joins the complete bill so this is whole.
+///
+/// `subjects` is the **optional** OCD `subject:` array, surfaced as a
+/// peer of `text` so a downstream `concept_match` matcher can score against
+/// the human-curated controlled vocabulary directly. The field is **omitted
+/// entirely** when the bill has no `subject:` (vs. an empty `[]`, which
+/// would conflate "no signal" with "explicitly empty") — see
+/// `selectors::ocd_files_extract_subjects` and STREAM_PROTOCOL.md §1.
 fn ocd_entry_to_doc(entry: &serde_json::Value) -> serde_json::Value {
     let bill_id = entry
         .get("log")
@@ -984,7 +991,31 @@ fn ocd_entry_to_doc(entry: &serde_json::Value) -> serde_json::Value {
         }
         None => canonical_bill_dir.or(bill_id).unwrap_or_else(String::new),
     };
-    serde_json::json!({ "id": id, "text": ocd_files_select_default(entry), "kind": "docs" })
+    let mut out = serde_json::Map::new();
+    out.insert("id".to_string(), serde_json::Value::String(id));
+    out.insert(
+        "text".to_string(),
+        serde_json::Value::String(ocd_files_select_default(entry)),
+    );
+    out.insert(
+        "kind".to_string(),
+        serde_json::Value::String("docs".to_string()),
+    );
+    // Optional `subjects:` — only emitted when the bill actually carries one
+    // or more non-empty OCD `subject:` entries. `None` is the unambiguous
+    // "no signal" form; we never emit `"subjects": []`.
+    if let Some(subjects) = ocd_files_extract_subjects(entry) {
+        out.insert(
+            "subjects".to_string(),
+            serde_json::Value::Array(
+                subjects
+                    .into_iter()
+                    .map(serde_json::Value::String)
+                    .collect(),
+            ),
+        );
+    }
+    serde_json::Value::Object(out)
 }
 
 /// Given a `sources.bill` path (`<...>/bills/<dir>/metadata.json`,
@@ -3891,6 +3922,144 @@ mod tests {
             doc.get("id").and_then(|v| v.as_str()),
             Some("mi-legislation/country:us/state:mi/sessions/2025-2026/bills/SB 0001"),
             "without sources.bill we fall back to log.bill_id (advisory; may carry whitespace)"
+        );
+    }
+
+    /// A4: OCD `subject:` arrays are gold-standard human classifications that
+    /// fastclass's future `concept_match` matcher reads. When the bill carries
+    /// a populated `subject:` list, the docs projection must surface it under
+    /// `subjects` so it travels with the rest of the bill text.
+    #[test]
+    fn ocd_entry_to_doc_surfaces_subjects_when_present() {
+        let entry = serde_json::json!({
+            "log": { "bill_id": "HB0001", "action": { "description": "PASSED" } },
+            "bill": {
+                "title": "An act about clean energy",
+                "identifier": "HB0001",
+                "subject": ["ENERGY", "ENVIRONMENT", "TAXATION"]
+            },
+            "sources": {
+                "log": "wy-legislation/country:us/state:wy/sessions/2025/bills/HB0001/logs/x.json",
+                "bill": "wy-legislation/country:us/state:wy/sessions/2025/bills/HB0001/metadata.json"
+            }
+        });
+        let doc = ocd_entry_to_doc(&entry);
+        let subjects = doc
+            .get("subjects")
+            .and_then(|v| v.as_array())
+            .expect("subjects must be present and an array when bill carries subject:");
+        let actual: Vec<&str> = subjects.iter().filter_map(|v| v.as_str()).collect();
+        assert_eq!(
+            actual,
+            vec!["ENERGY", "ENVIRONMENT", "TAXATION"],
+            "subjects must mirror the OCD subject: array verbatim and in order"
+        );
+        // The rest of the contract — id/text/kind — must be unaffected by
+        // the additive field.
+        assert_eq!(doc.get("kind").and_then(|v| v.as_str()), Some("docs"));
+        assert!(
+            doc.get("text")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .contains("clean energy"),
+            "existing text projection must still include the bill title"
+        );
+    }
+
+    /// A4: When the bill has no `subject:` key at all, the docs record must
+    /// have **no `subjects` key** (not `"subjects": []`). Many states omit
+    /// the OCD subject array entirely; conflating that with "explicitly
+    /// empty" would force the consumer to guess.
+    #[test]
+    fn ocd_entry_to_doc_omits_subjects_when_bill_has_no_subject_key() {
+        let entry = serde_json::json!({
+            "log": { "bill_id": "HB0001", "action": { "description": "PASSED" } },
+            "bill": {
+                "title": "An untagged bill",
+                "identifier": "HB0001"
+                // No subject: key at all.
+            },
+            "sources": {
+                "log": "wy-legislation/country:us/state:wy/sessions/2025/bills/HB0001/logs/x.json",
+                "bill": "wy-legislation/country:us/state:wy/sessions/2025/bills/HB0001/metadata.json"
+            }
+        });
+        let doc = ocd_entry_to_doc(&entry);
+        assert!(
+            doc.get("subjects").is_none(),
+            "subjects must be omitted entirely when bill has no subject: field; got: {:?}",
+            doc.get("subjects")
+        );
+    }
+
+    /// A4: An explicitly empty `subject: []` is treated the same as missing —
+    /// no `subjects` key in the output. WY's `HB0001` mock has `subject: []`
+    /// for example; we don't want every WY record to ship `"subjects": []`
+    /// just because the OCD scraper materialized an empty list.
+    #[test]
+    fn ocd_entry_to_doc_omits_subjects_when_subject_array_is_empty() {
+        let entry = serde_json::json!({
+            "log": { "bill_id": "HB0001", "action": { "description": "PASSED" } },
+            "bill": {
+                "title": "An empty-subjects bill",
+                "identifier": "HB0001",
+                "subject": []
+            },
+            "sources": {
+                "log": "wy-legislation/country:us/state:wy/sessions/2025/bills/HB0001/logs/x.json",
+                "bill": "wy-legislation/country:us/state:wy/sessions/2025/bills/HB0001/metadata.json"
+            }
+        });
+        let doc = ocd_entry_to_doc(&entry);
+        assert!(
+            doc.get("subjects").is_none(),
+            "subjects must be omitted for explicit empty arrays — empty conflates with \
+             absent and breaks the 'present means signal' contract; got: {:?}",
+            doc.get("subjects")
+        );
+    }
+
+    /// A4: A `subject:` array with only blank strings is treated as empty —
+    /// the trim-then-filter pass means whitespace-only entries don't make it
+    /// into the projection, and a list of all-blank entries omits the field.
+    #[test]
+    fn ocd_entry_to_doc_omits_subjects_when_subject_array_is_all_blank() {
+        let entry = serde_json::json!({
+            "log": { "bill_id": "HB0001", "action": { "description": "PASSED" } },
+            "bill": {
+                "title": "A whitespace-only-subjects bill",
+                "identifier": "HB0001",
+                "subject": ["", "   "]
+            },
+            "sources": {
+                "log": "wy-legislation/country:us/state:wy/sessions/2025/bills/HB0001/logs/x.json",
+                "bill": "wy-legislation/country:us/state:wy/sessions/2025/bills/HB0001/metadata.json"
+            }
+        });
+        let doc = ocd_entry_to_doc(&entry);
+        assert!(
+            doc.get("subjects").is_none(),
+            "subjects must be omitted when every subject element is blank/whitespace"
+        );
+    }
+
+    /// A4: When the entry is a bare `log` record (no `--join bill`),
+    /// `subjects` cannot be derived — there's no bill metadata to read from.
+    /// The field must be omitted. This is the same fallback path as the id
+    /// resolution above; without the bill join we have no `subject:` source.
+    #[test]
+    fn ocd_entry_to_doc_omits_subjects_when_bill_join_absent() {
+        let entry = serde_json::json!({
+            "log": { "bill_id": "HB0001", "action": { "description": "PASSED" } },
+            "sources": {
+                "log": "wy-legislation/country:us/state:wy/sessions/2025/bills/HB0001/logs/x.json"
+                // No `sources.bill`, no `bill` join.
+            }
+        });
+        let doc = ocd_entry_to_doc(&entry);
+        assert!(
+            doc.get("subjects").is_none(),
+            "subjects must be omitted when the bill metadata isn't joined into the entry"
         );
     }
 
