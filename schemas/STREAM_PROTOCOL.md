@@ -85,7 +85,8 @@ type-check a transform DAG and validate that `publish.*.select:` tag names exist
   "tags": ["clean_energy", "conservation", "emissions_and_climate", "fossil_fuels"],
   "classifier_version": "sha256:<12-hex>",
   "fusion_version": "fusion-v1",
-  "model": {"name": "sentence-transformers/all-MiniLM-L6-v2", "sha256_prefix": "<12-hex>"}
+  "model": {"name": "sentence-transformers/all-MiniLM-L6-v2", "sha256_prefix": "<12-hex>"},
+  "model_rerank": {"name": "cross-encoder/ms-marco-MiniLM-L-6-v2", "sha256_prefix": "<12-hex>"}
 }
 ```
 
@@ -103,6 +104,16 @@ type-check a transform DAG and validate that `publish.*.select:` tag names exist
   this is additive: consumers that don't know about `model` ignore it, and
   the lexical-only describe output is byte-identical to the pre-Tier-2
   contract.
+- **`model_rerank`** — **optional**. Present iff a reranker model is
+  installed at `<bundle>/model-rerank/` (sibling of `<bundle>/model/`).
+  Same shape as `model` (`{name?: string, sha256_prefix: string}`) and
+  same `name` rule: set to the `KNOWN_MODELS` row when the SHA matches a
+  vetted entry, **omitted** for a user-staged reranker whose SHA isn't on
+  the vetted list. The block is **omitted entirely** for a bundle without
+  a reranker installed. Additive in the same way as `model`: consumers
+  that don't know about `model_rerank` ignore it, and a bundle with no
+  reranker produces describe output byte-identical to the pre-rerank
+  contract.
 
 ## 4. The classifier-bundle layout
 
@@ -119,6 +130,7 @@ passes the path (`classifier=<bundle>`). `fastclass` must NOT know the word "gov
     rolling.yml         refreshable working eval set (optional)
   proposals/            improvement-proposal history
   model/                optional embedding model
+  model-rerank/         optional reranker model (sibling of model/)
   fastclass.lock        pins bundle + binary versions for lineage
 ```
 
