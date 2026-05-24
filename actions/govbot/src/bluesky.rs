@@ -74,8 +74,11 @@ pub fn run_bluesky(job: &PublishJob, dry_run: bool) -> Result<()> {
     let min_score = p.resolved_min_score();
 
     // Resolve the ledger path (project-dir relative). Default: a per-publisher
-    // file under `.govbot/`.
+    // file under `state/`. The legacy `.govbot/`-rooted path is consulted as
+    // a read-only fallback for projects that ran a pre-fix govbot, so a
+    // version bump doesn't lose post history; see `resolve_ledger_path`.
     let ledger_path = resolve_ledger_path(job);
+    let legacy_path = legacy_ledger_path(job);
 
     // Select records: a `select`ed tag must clear the calibrated threshold.
     //
@@ -112,8 +115,17 @@ pub fn run_bluesky(job: &PublishJob, dry_run: bool) -> Result<()> {
         return Ok(());
     }
 
-    // Idempotency: drop records already in the posted-state ledger.
-    let already_posted = read_ledger(&ledger_path)?;
+    // Idempotency: drop records already in the posted-state ledger. The set
+    // is the union of the new (`state/`) ledger and the legacy (`.govbot/`)
+    // ledger so an upgrading project doesn't double-post records it logged
+    // under the old path. Writes only land at the new path; the legacy file
+    // becomes harmless once a full re-run has copied its contents forward.
+    let mut already_posted = read_ledger(&ledger_path)?;
+    if ledger_path != legacy_path {
+        for id in read_ledger(&legacy_path)? {
+            already_posted.insert(id);
+        }
+    }
     let pending: Vec<&RenderedPost> = posts
         .iter()
         .filter(|post| !already_posted.contains(&post.id))
@@ -391,8 +403,27 @@ fn truncate_post(text: &str) -> String {
 // ============================================================
 
 /// Resolve the ledger file path: the publisher's `ledger` field if set,
-/// else `<project>/.govbot/bluesky-<name>.ledger`. Relative paths resolve
+/// else `<project>/state/bluesky-<name>.ledger`. Relative paths resolve
 /// against the project directory (where `govbot.yml` lives).
+///
+/// **Why `state/` and not `.govbot/`.** `.govbot/` is the tool's cache —
+/// the `node_modules/` equivalent — and is safe to `rm -rf` to start
+/// fresh. The posted-state ledger is the opposite: it is the
+/// **single source of truth** for which records the bot has already
+/// posted; deleting it makes the next run double-post everything. Putting
+/// it under `.govbot/` invited exactly that footgun. `state/` is the
+/// peer of `tags/` (classification output) and `dist/` (publisher
+/// output) — an operational, non-cache dir that scales as more stateful
+/// publishers land (a future `mastodon` publisher would put its ledger
+/// at `state/mastodon-<name>.ledger`).
+///
+/// **Backward compatibility.** Writes always land at the new
+/// `state/...` path. Reads check there first; if the file is missing,
+/// they fall back to the legacy `.govbot/bluesky-<name>.ledger` so
+/// existing projects don't lose post history on upgrade. After one full
+/// re-run the new ledger has everything the old one did, and the user
+/// (or a future `govbot migrate`) can delete the legacy file. See
+/// `read_ledger` / `legacy_ledger_path`.
 fn resolve_ledger_path(job: &PublishJob) -> PathBuf {
     match &job.publisher.ledger {
         Some(p) => {
@@ -405,9 +436,18 @@ fn resolve_ledger_path(job: &PublishJob) -> PathBuf {
         }
         None => job
             .project_dir
-            .join(".govbot")
+            .join("state")
             .join(format!("bluesky-{}.ledger", job.name)),
     }
+}
+
+/// The legacy `.govbot/`-rooted ledger path. Read-only fallback for
+/// projects that ran a pre-fix govbot; never written. See the doc
+/// comment on `resolve_ledger_path` for the migration story.
+fn legacy_ledger_path(job: &PublishJob) -> PathBuf {
+    job.project_dir
+        .join(".govbot")
+        .join(format!("bluesky-{}.ledger", job.name))
 }
 
 /// Read the set of already-posted record ids from the ledger. A missing
@@ -789,5 +829,151 @@ mod tests {
             "expected {{link}} to resolve to the html publisher's landing-page URL; got: {}",
             post.text
         );
+    }
+
+    // ------------------------------------------------------------
+    // Ledger-path regression tests (Bug: ledger in `.govbot/`)
+    // ------------------------------------------------------------
+
+    use crate::config::{Publisher, PublisherKind};
+    use tempfile::tempdir;
+
+    /// Build a minimal bluesky `Publisher` with `ledger = None` so the
+    /// default-path resolution is exercised.
+    fn bluesky_publisher_default() -> Publisher {
+        Publisher {
+            kind: PublisherKind::Bluesky,
+            select: None,
+            base_url: None,
+            output_dir: None,
+            output_file: None,
+            title: None,
+            description: None,
+            limit: None,
+            min_score: None,
+            ledger: None,
+            post_template: None,
+        }
+    }
+
+    fn job_for_publisher<'a>(
+        name: &'a str,
+        publisher: &'a Publisher,
+        project_dir: PathBuf,
+    ) -> PublishJob<'a> {
+        PublishJob {
+            name,
+            publisher,
+            entries: vec![],
+            output_dir_override: None,
+            output_file_override: None,
+            project_dir,
+            dry_run: false,
+            html_entry_url: None,
+        }
+    }
+
+    /// The default ledger path lands under `state/`, NOT `.govbot/`.
+    /// `.govbot/` is the tool's regenerable cache (node_modules/-style);
+    /// the ledger is user-meaningful state — deleting `.govbot/` to
+    /// reset the cache must not destroy post history.
+    #[test]
+    fn default_ledger_path_lives_under_state_not_govbot_cache() {
+        let dir = tempdir().unwrap();
+        let p = bluesky_publisher_default();
+        let job = job_for_publisher("bluesky", &p, dir.path().to_path_buf());
+        let resolved = resolve_ledger_path(&job);
+        assert_eq!(
+            resolved,
+            dir.path().join("state").join("bluesky-bluesky.ledger"),
+            "default ledger must be <project>/state/bluesky-<name>.ledger, not under .govbot/"
+        );
+        // Cross-check: it must NOT be under the cache dir.
+        assert!(
+            !resolved.starts_with(dir.path().join(".govbot")),
+            "default ledger must never resolve under .govbot/ (the cache); got: {}",
+            resolved.display()
+        );
+    }
+
+    /// An explicit `ledger:` field in `govbot.yml` is honoured verbatim
+    /// (relative to the project dir) — including absolute paths — so a
+    /// user who deliberately wants a specific location can pin it.
+    #[test]
+    fn explicit_ledger_field_overrides_default() {
+        let dir = tempdir().unwrap();
+        let mut p = bluesky_publisher_default();
+        p.ledger = Some("custom/posted.ledger".to_string());
+        let job = job_for_publisher("bluesky", &p, dir.path().to_path_buf());
+        assert_eq!(
+            resolve_ledger_path(&job),
+            dir.path().join("custom/posted.ledger")
+        );
+
+        // Absolute paths pass through untouched.
+        let abs = dir.path().join("abs.ledger");
+        p.ledger = Some(abs.to_string_lossy().to_string());
+        let job = job_for_publisher("bluesky", &p, dir.path().to_path_buf());
+        assert_eq!(resolve_ledger_path(&job), abs);
+    }
+
+    /// Backward-compat: an existing pre-fix ledger at the legacy
+    /// `.govbot/bluesky-<name>.ledger` path is read so upgrading users
+    /// don't lose their post history. `read_ledger` is the unit-level
+    /// surface; `run_bluesky` unions the two on read.
+    #[test]
+    fn legacy_govbot_ledger_is_readable_as_fallback() {
+        let dir = tempdir().unwrap();
+        let p = bluesky_publisher_default();
+        let job = job_for_publisher("bluesky", &p, dir.path().to_path_buf());
+
+        // Seed only the legacy path; new path stays absent.
+        let legacy = legacy_ledger_path(&job);
+        std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        std::fs::write(&legacy, "wy-legislation/.../HB9999\n").unwrap();
+
+        // The new path resolves under state/ and has no file yet — the
+        // primary read is empty, the legacy read carries the history.
+        let new_path = resolve_ledger_path(&job);
+        assert!(!new_path.exists());
+        assert!(read_ledger(&new_path).unwrap().is_empty());
+
+        let legacy_seen = read_ledger(&legacy).unwrap();
+        assert!(
+            legacy_seen.contains("wy-legislation/.../HB9999"),
+            "legacy ledger must be readable so upgrades preserve post history"
+        );
+    }
+
+    /// Writes always land at the *new* path even when a legacy ledger
+    /// exists — so the legacy file becomes harmless after one full
+    /// re-run and the user (or a future `govbot migrate`) can delete it.
+    #[test]
+    fn appends_land_at_new_path_not_legacy() {
+        let dir = tempdir().unwrap();
+        let p = bluesky_publisher_default();
+        let job = job_for_publisher("bluesky", &p, dir.path().to_path_buf());
+
+        // Pre-populate the legacy ledger to simulate an upgrading project.
+        let legacy = legacy_ledger_path(&job);
+        std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        std::fs::write(&legacy, "old-id\n").unwrap();
+        let legacy_before = std::fs::read_to_string(&legacy).unwrap();
+
+        // Append via the resolved (new) path — the production code path.
+        let new_path = resolve_ledger_path(&job);
+        append_ledger(&new_path, "new-id").unwrap();
+
+        // New path now holds the new id.
+        let new_contents = std::fs::read_to_string(&new_path).unwrap();
+        assert!(new_contents.contains("new-id"));
+        // Legacy is untouched — we never write there.
+        let legacy_after = std::fs::read_to_string(&legacy).unwrap();
+        assert_eq!(
+            legacy_before, legacy_after,
+            "writes must never land at the legacy .govbot/ ledger path"
+        );
+        // The new path is under state/, not .govbot/.
+        assert!(new_path.starts_with(dir.path().join("state")));
     }
 }

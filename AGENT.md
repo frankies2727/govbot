@@ -211,7 +211,7 @@ publish:
     # no `html` publisher is configured.
     base_url: "https://<user>.github.io/<repo>"
     post_template: "{title}\n\n{tags} · {link}"
-    # ledger: .govbot/bluesky-bluesky.ledger   # default; tracks posted bills
+    # ledger: state/bluesky-bluesky.ledger   # default; tracks posted bills
 
   feed:
     type: rss             # writes <output_dir>/feed.xml (only)
@@ -393,13 +393,19 @@ Project layout:
 - `.env`            — Bluesky credentials (git-ignored; see `.env.example`)
 
 Tool-managed dirs (all git-ignored by default):
-- `.govbot/`        — the tool's CACHE (cloned datasets, ledgers); the
+- `.govbot/`        — the tool's CACHE (cloned datasets, sync state); the
                       `node_modules/` equivalent. Never edit by hand;
                       `rm -rf .govbot/` is always safe.
 - `tags/`           — classification OUTPUT from `govbot apply`
                       (`tags/<dataset>/country:.../sessions/<id>/<tag>.tag.json`).
                       Remove `tags/` from `.gitignore` if you want
                       classification provenance committed.
+- `state/`          — publisher STATE from `govbot publish` (e.g. the
+                      bluesky publisher's posted-state ledger,
+                      `state/bluesky-<name>.ledger`). Regenerable-but-
+                      operational: deleting it makes the next run
+                      double-post. Remove `state/` from `.gitignore` to
+                      commit post history and let cold clones resume.
 - `dist/` / `docs/` — publisher output from `govbot publish`.
 
 To tune the classifier, use the fastclass plugin: `/fastclass:improve`.
@@ -528,7 +534,7 @@ Under `govbot.yml: publish:` (see the template in §1.3):
 | `min_score` | minimum calibrated `final_score` (0..1) to post; default `0.6` |
 | `base_url` | fallback prefix for `{link}` when no companion `html` publisher is configured; same shape as the rss/html publishers' `base_url` |
 | `post_template` | post text; placeholders `{title} {tags} {link} {identifier} {session} {score}`; truncated to 300 chars |
-| `ledger` | posted-state ledger path; default `.govbot/bluesky-<name>.ledger` |
+| `ledger` | posted-state ledger path; default `state/bluesky-<name>.ledger` (peer to `tags/` and `dist/`; NOT under `.govbot/`, which is the tool's cache). A ledger at the legacy `.govbot/bluesky-<name>.ledger` path is read as a fallback so upgrades don't lose history. |
 
 `{link}` resolves in this order: (1) the manifest's `html` publisher's
 `base_url` — the **human-readable landing page** activists actually click
@@ -602,14 +608,15 @@ jobs:
       # Commit the ledger back so re-runs stay idempotent across CI runs:
       - name: Persist the posted-state ledger
         run: |
-          git add -f .govbot/*.ledger || true
+          git add -f state/*.ledger || true
           git commit -m "newsbot: update posted-state ledger" || true
           git push || true
 ```
 
-In CI the `.govbot/` ledger is ephemeral unless persisted — commit the
-`*.ledger` file back (as above) or store it in a cache/artifact, or the bot
-will re-post on every run.
+In CI the `state/` ledger is ephemeral unless persisted — commit the
+`*.ledger` file back (as above; you'll also want to remove the `state/`
+line from `.gitignore` so the commit isn't a force-add forever) or store
+it in a cache/artifact, or the bot will re-post on every run.
 
 ---
 

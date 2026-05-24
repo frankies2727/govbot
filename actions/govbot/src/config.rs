@@ -134,7 +134,11 @@ pub struct Publisher {
 
     /// Path to the append-only posted-state ledger that makes the publisher
     /// idempotent — re-runs never double-post. Relative to the project
-    /// directory; defaults to `.govbot/bluesky-<publisher>.ledger`.
+    /// directory; defaults to `state/bluesky-<publisher>.ledger` (peer to
+    /// `tags/` and `dist/`; NOT under `.govbot/`, which is the tool's
+    /// regenerable cache). On upgrade, a legacy
+    /// `.govbot/bluesky-<publisher>.ledger` is read as a fallback so post
+    /// history survives; writes always land at the new path.
     #[serde(default)]
     pub ledger: Option<String>,
 

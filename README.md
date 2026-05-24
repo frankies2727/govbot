@@ -187,11 +187,14 @@ role; all are git-ignored by default:
 
 | Dir | Owner | Contents |
 |---|---|---|
-| `.govbot/` | the tool's **cache** (`node_modules/` equivalent) | cloned datasets, ledgers, sync state. Fully regenerable. Never edit. |
+| `.govbot/` | the tool's **cache** (`node_modules/` equivalent) | cloned datasets, sync state. Fully regenerable. Never edit. |
 | `tags/` | `govbot apply` (**classification output**) | `tags/<dataset>/country:.../sessions/<id>/<tag>.tag.json` |
+| `state/` | `govbot publish` (**publisher state**) | append-only ledgers (e.g. bluesky's posted-state at `state/bluesky-<name>.ledger`). Regenerable but operational — deleting it double-posts on the next run. |
 | `dist/` (or `docs/`) | `govbot publish` (**publisher output**) | RSS / HTML / JSON feeds |
 
 Remove `tags/` from `.gitignore` to commit classification provenance.
+Remove `state/` from `.gitignore` to commit publisher state (e.g. so a
+cold CI clone resumes without double-posting).
 
 # 🏛️ Govbot Legislation Data Catalogs
 

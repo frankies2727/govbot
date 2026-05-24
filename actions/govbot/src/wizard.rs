@@ -290,11 +290,11 @@ pub fn generate_govbot_yml(datasets: &[String], base_url: &str) -> String {
 
 /// Write .gitignore with govbot's generated dirs and secret-bearing files.
 ///
-/// Everything under `.govbot/` (cloned datasets, ledgers, lockfile state),
+/// Everything under `.govbot/` (cloned datasets, sync state — the cache),
 /// every publisher output dir (`dist/`, `docs/`), the classification-output
-/// dir `tags/`, and any local `.env` is untracked. The userland repo is a
-/// few dozen text files plus tool artifacts; the artifacts never belong in
-/// git.
+/// dir `tags/`, the operational-state dir `state/`, and any local `.env` is
+/// untracked. The userland repo is a few dozen text files plus tool
+/// artifacts; the artifacts never belong in git.
 ///
 /// **`tags/` trade-off.** `govbot apply` writes per-tag `.tag.json` files
 /// under `tags/<dataset>/country:.../sessions/<id>/`. The file count grows
@@ -302,6 +302,13 @@ pub fn generate_govbot_yml(datasets: &[String], base_url: &str) -> String {
 /// so it is git-ignored by default. Users who want classification
 /// provenance committed (e.g. for offline review or auditability) can
 /// remove the `tags/` line from this file.
+///
+/// **`state/` trade-off.** The bluesky publisher writes its posted-state
+/// ledger under `state/bluesky-<name>.ledger` — the append-only record of
+/// which bills have already been posted. Ignored by default to keep the
+/// repo clean; remove the `state/` line to commit the post history and
+/// let a cold clone (e.g. a fresh CI runner) resume without double-posts.
+/// Same regenerable-but-operational shape as `tags/`.
 pub fn write_gitignore(cwd: &Path) -> Result<()> {
     let gitignore_path = cwd.join(".gitignore");
     // Single canonical block — easy to grep, easy to update.
@@ -313,6 +320,10 @@ docs/
 # Classification output from `govbot apply` — regenerated each run.
 # Remove this line if you want classification provenance committed.
 tags/
+# Publisher state — append-only ledgers (e.g. bluesky's posted-state).
+# Regenerable-but-operational: deleting it makes the next run double-post.
+# Remove this line to commit post history and let cold clones resume cleanly.
+state/
 
 # Secrets — never commit
 .env

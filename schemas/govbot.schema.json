@@ -140,7 +140,7 @@
           "default": 0.6
         },
         "ledger": {
-          "description": "Bluesky publisher only. Path to the append-only posted-state ledger that makes the publisher idempotent -- it records the id of every record posted so re-runs never double-post. Relative paths resolve against the project directory. Defaults to '.govbot/bluesky-<publisher>.ledger'.",
+          "description": "Bluesky publisher only. Path to the append-only posted-state ledger that makes the publisher idempotent -- it records the id of every record posted so re-runs never double-post. Relative paths resolve against the project directory. Defaults to 'state/bluesky-<publisher>.ledger' (peer to 'tags/' and 'dist/'); NOT under '.govbot/', which is the tool's regenerable cache. If a ledger file exists at the legacy '.govbot/bluesky-<publisher>.ledger' location from a pre-fix install, it is read as a fallback so post history survives the upgrade; writes always land at the new path.",
           "type": "string"
         },
         "post_template": {
