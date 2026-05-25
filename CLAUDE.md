@@ -236,6 +236,26 @@ distinct role; do not conflate them:
 - **`dist/`** — **publisher output**, written by `govbot publish` (RSS /
   HTML / JSON feeds).
 
+### Publishers dedup by bill, not by action log
+
+Every publisher (`bluesky`, `rss`, `html`, `json`) emits **one item per
+(jurisdiction, bill_id)** — not one per action-log file. A single bill
+typically emits many records to the source stream (one per committee
+referral, hearing, vote event, …); the publishers collapse them to a
+single representative so an activist sees one post per bill in their
+feed. Before this fix, the climate-tracker feed posted NV AB1 six
+times under six different action logs.
+
+The dedup key is the **bill-level GUID** (`rss::bill_guid`), of the form
+`<dataset>/.../sessions/<id>/bills/<bill_id>`. For `bluesky` the
+**ledger key** is also this bill-level GUID: future log additions for an
+already-posted bill do **not** trigger a re-post. The publisher reads
+legacy per-log ledger entries on upgrade — entries written under the
+per-bill-log layout collapse to the new bill key cleanly; entries
+written under the session-level-log layout (the OCD-files common case)
+incur a one-time re-post per previously-posted bill, after which the
+ledger holds the new bill-level GUID and the bill never re-posts again.
+
 **`govbot.yml` is NOT the classifier — it is a manifest.** It declares
 `datasets`, `transforms`, `publish`, and `pipelines`; it has **no `tags:`
 block**. The tag taxonomy lives in a separate **fastclass classifier bundle**

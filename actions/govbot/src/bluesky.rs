@@ -41,7 +41,7 @@
 use crate::publish::PublishJob;
 use anyhow::{Context, Result};
 use serde_json::{json, Value};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -80,7 +80,18 @@ pub fn run_bluesky(job: &PublishJob, dry_run: bool) -> Result<()> {
     let ledger_path = resolve_ledger_path(job);
     let legacy_path = legacy_ledger_path(job);
 
-    // Select records: a `select`ed tag must clear the calibrated threshold.
+    // Dedup-then-filter, by **bill** (jurisdiction, bill_id), not by
+    // action-log. A bill emits one record per action-log file (committee
+    // referral, hearing, passage vote …); without this collapse, an
+    // activist sees the same bill posted N times in a row (NV AB1 6×,
+    // AK HB53 4× on the climate-tracker feed before the fix). The rule:
+    //
+    //   1. group every entry by `bill_guid` (no score filter yet);
+    //   2. within each group pick the **highest-scoring qualifying log**
+    //      as the representative — so a bill counts when *any* of its
+    //      logs cleared `min_score` for a selected tag, and the post we
+    //      render is the strongest one;
+    //   3. drop bills whose every log scored under threshold.
     //
     // `{link}` resolves with this priority:
     //   1. the companion `html` publisher's landing-page URL (the human page);
@@ -91,10 +102,9 @@ pub fn run_bluesky(job: &PublishJob, dry_run: bool) -> Result<()> {
     // carries an html publisher, route activists to that human page rather
     // than to the raw JSON that the rss/html publishers' `extract_link`
     // emits.
-    let posts: Vec<RenderedPost> = job
-        .entries
-        .iter()
-        .filter(|e| record_clears_threshold(e, &select, min_score))
+    let representatives = pick_per_bill_representatives(&job.entries, &select, min_score);
+    let posts: Vec<RenderedPost> = representatives
+        .into_iter()
         .map(|e| {
             render_post(
                 e,
@@ -120,10 +130,26 @@ pub fn run_bluesky(job: &PublishJob, dry_run: bool) -> Result<()> {
     // ledger so an upgrading project doesn't double-post records it logged
     // under the old path. Writes only land at the new path; the legacy file
     // becomes harmless once a full re-run has copied its contents forward.
-    let mut already_posted = read_ledger(&ledger_path)?;
+    //
+    // Both shapes of ledger entry are honoured:
+    //   - **New** (bill-level GUID, `<dataset>/.../bills/<id>`) — matched
+    //     verbatim against the post's bill-level id.
+    //   - **Legacy** (per-log GUID) — collapsed via
+    //     `ledger_id_to_bill_key` on read. Per-bill-log layout entries
+    //     (`<dataset>/.../bills/<id>/logs/<file>`) suppress re-posts
+    //     cleanly. Session-level-log layout entries
+    //     (`<dataset>/.../sessions/<id>/logs/<file>`) — the OCD-files
+    //     common case — strip to the session prefix and incur a
+    //     documented one-time re-post per previously-posted bill (after
+    //     which the new bill-level GUID is in the ledger). See
+    //     `ledger_id_to_bill_key` for the migration story.
+    let mut already_posted: HashSet<String> = HashSet::new();
+    for id in read_ledger(&ledger_path)? {
+        already_posted.insert(ledger_id_to_bill_key(&id));
+    }
     if ledger_path != legacy_path {
         for id in read_ledger(&legacy_path)? {
-            already_posted.insert(id);
+            already_posted.insert(ledger_id_to_bill_key(&id));
         }
     }
     let pending: Vec<&RenderedPost> = posts
@@ -236,6 +262,13 @@ pub fn run_bluesky(job: &PublishJob, dry_run: bool) -> Result<()> {
 ///
 /// The `tags` field is a map `tag_name -> ScoreBreakdown`; the calibrated
 /// probability is `tags.<name>.final_score` (STREAM_PROTOCOL §5).
+///
+/// **Note.** The production publisher path now uses
+/// [`pick_per_bill_representatives`], which folds this check into a
+/// per-group walk so the per-bill dedup can pick the highest-scoring
+/// qualifying log as the representative. This standalone predicate is
+/// kept as the simplest unit-testable surface for the threshold rule.
+#[cfg_attr(not(test), allow(dead_code))]
 fn record_clears_threshold(entry: &Value, select: &[String], min_score: f64) -> bool {
     let tags = match entry.get("tags").and_then(|t| t.as_object()) {
         Some(t) if !t.is_empty() => t,
@@ -275,7 +308,12 @@ fn render_post(
     base_url: Option<&str>,
     html_entry_url: Option<&str>,
 ) -> RenderedPost {
-    let id = crate::rss::extract_guid(entry);
+    // Ledger key — **bill-level** so future action logs for the same bill
+    // (new committee referrals, vote events, …) do not re-post the bill.
+    // Pre-fix this was the per-log GUID, which let a single bill trigger
+    // N posts as N action logs arrived; the migration story for already-
+    // posted bills is in `ledger_id_to_bill_key`.
+    let id = crate::rss::bill_guid(entry);
     let template = template.unwrap_or(DEFAULT_TEMPLATE);
 
     let title = bill_title(entry);
@@ -354,6 +392,124 @@ fn top_score(entry: &Value) -> Option<f64> {
                 .filter_map(|s| s.get("final_score").and_then(|v| v.as_f64()))
                 .fold(None, |acc, s| Some(acc.map_or(s, |a: f64| a.max(s))))
         })
+}
+
+/// The highest calibrated `final_score` across a record's tags **restricted
+/// to `select`**. When `select` is empty, every tag counts; otherwise only
+/// the named tags. Returns `None` when no qualifying tag carries a score.
+///
+/// This is the score used to rank logs *within a bill group* when picking
+/// the representative — so a bill posts under its strongest qualifying log,
+/// not (arbitrarily) under its newest one.
+fn top_selected_score(entry: &Value, select: &[String]) -> Option<f64> {
+    entry
+        .get("tags")
+        .and_then(|t| t.as_object())
+        .and_then(|tags| {
+            tags.iter()
+                .filter(|(name, _)| select.is_empty() || select.iter().any(|s| s == *name))
+                .filter_map(|(_, s)| s.get("final_score").and_then(|v| v.as_f64()))
+                .fold(None, |acc, s| Some(acc.map_or(s, |a: f64| a.max(s))))
+        })
+}
+
+/// Collapse an entry stream to one representative per (jurisdiction,
+/// bill_id), filtering and ranking by score.
+///
+/// For each bill the bluesky publisher's contract is **one post**. Inputs
+/// may carry many entries for the same bill (one per action log); this
+/// function:
+///
+///   1. groups by [`crate::rss::bill_guid`];
+///   2. within each group, **keeps only logs whose top `select`ed score
+///      clears `min_score`** — the bill is dropped when no log qualifies;
+///   3. picks the **highest-scoring** qualifying log as the representative
+///      — ties break on stream order (the input is timestamp-sorted DESC,
+///      so a tie wins for the newest log).
+///
+/// Returns the representatives in **input stream order** so a downstream
+/// `--limit` keeps the bills the user saw first (the newest, given the
+/// upstream DESC sort).
+fn pick_per_bill_representatives<'a>(
+    entries: &'a [Value],
+    select: &[String],
+    min_score: f64,
+) -> Vec<&'a Value> {
+    // Map bill_guid -> index into `entries` of the current best representative,
+    // along with its score. A `Vec` of bill_guid in first-seen order gives
+    // us a deterministic output order.
+    let mut best: HashMap<String, (usize, f64)> = HashMap::new();
+    let mut order: Vec<String> = Vec::new();
+
+    for (i, e) in entries.iter().enumerate() {
+        // Bill counts when *any* of its logs clears the threshold for a
+        // selected tag — this filter is per-log, applied during the group
+        // walk so a bill with zero qualifying logs simply never enters the
+        // map.
+        let Some(score) = top_selected_score(e, select) else {
+            continue;
+        };
+        if score < min_score {
+            continue;
+        }
+        let key = crate::rss::bill_guid(e);
+        match best.get(&key) {
+            Some((_, prev_score)) if *prev_score >= score => {
+                // The current best beats (or ties) this log on score — keep
+                // the existing winner (preserves stream order on ties, which
+                // means newest wins since input is DESC).
+            }
+            Some(_) => {
+                best.insert(key, (i, score));
+            }
+            None => {
+                order.push(key.clone());
+                best.insert(key, (i, score));
+            }
+        }
+    }
+
+    order
+        .into_iter()
+        .filter_map(|k| best.get(&k).map(|(i, _)| &entries[*i]))
+        .collect()
+}
+
+/// Collapse a (possibly per-log, legacy-shape) ledger id to its bill-level
+/// key — the new ledger key shape.
+///
+/// Pre-fix the ledger held per-log GUIDs of the form
+/// `<dataset>/.../sessions/<id>/logs/<file>.json` (session-level layout,
+/// the OCD-files common case) or
+/// `<dataset>/.../bills/<bill_id>/logs/<file>.json` (per-bill-log layout).
+/// Post-fix the writer emits the **bill-level** key — always
+/// `<dataset>/.../bills/<bill_id>` — and the reader compares against that.
+///
+/// This function strips `/logs/...` off either shape. Two outcomes:
+///
+///   - **Per-bill-log layout** — the prefix already ends in
+///     `/bills/<bill_id>`, so the collapse cleanly matches the new
+///     bill-level key. Legacy entries from this layout suppress re-posts.
+///   - **Session-level-log layout** — the prefix ends at `/sessions/<id>`
+///     with no bill segment. The legacy entry preserves a session-prefix
+///     in the dedup set, but a new post's bill-level key
+///     (`<session>/bills/<id>`) won't match it. The bill therefore
+///     **re-posts once** on the first post-upgrade run, after which the
+///     new bill-level GUID is in the ledger and never re-posts again.
+///
+/// Pre-fix users incur at most one extra post per previously-posted bill
+/// in session-level-log layouts. This is the honest migration cost; the
+/// alternative — guessing the bill from a session-level log path alone —
+/// would be wrong as often as it would be right (the filename does not
+/// reliably encode the bill).
+///
+/// Entries that do not contain `/logs/` (already bill-level, or a
+/// synthetic `<ts>_<bill_id>` fallback) pass through unchanged.
+fn ledger_id_to_bill_key(id: &str) -> String {
+    match id.split_once("/logs/") {
+        Some((prefix, _)) => prefix.to_string(),
+        None => id.to_string(),
+    }
 }
 
 /// Best-effort bill title — the bill's `title`, else its identifier, else a
@@ -975,5 +1131,306 @@ mod tests {
         );
         // The new path is under state/, not .govbot/.
         assert!(new_path.starts_with(dir.path().join("state")));
+    }
+
+    // ------------------------------------------------------------
+    // Per-bill dedup regression tests (Bug: posting once per action log)
+    // ------------------------------------------------------------
+
+    /// A synthetic log entry for a single bill — the shape `govbot source
+    /// --join bill,tags` emits. `score` is the calibrated `final_score`
+    /// for the `clean_energy` tag (the test default).
+    fn log_entry(
+        dataset: &str,
+        session: &str,
+        bill_id: &str,
+        log_filename: &str,
+        score: f64,
+    ) -> Value {
+        let log_path = format!(
+            "{}/country:us/state:xx/sessions/{}/logs/{}",
+            dataset, session, log_filename
+        );
+        json!({
+            "id": bill_id,
+            "bill": { "title": format!("Bill {}", bill_id), "identifier": bill_id },
+            "log": { "bill_id": bill_id },
+            "sources": { "log": log_path },
+            "tags": { "clean_energy": { "final_score": score } }
+        })
+    }
+
+    /// Six action-log entries for the same NV AB1 bill (the audit's worst
+    /// case — 6 of 96 posts were the same bill) must collapse to ONE
+    /// rendered post, not six.
+    #[test]
+    fn bluesky_publisher_emits_one_post_per_bill_even_with_multiple_action_logs() {
+        let entries: Vec<Value> = (1..=6)
+            .map(|i| {
+                log_entry(
+                    "nv-legislation",
+                    "2025Special36",
+                    "AB1",
+                    &format!("2025111{}T080000Z.classification.referral.json", i),
+                    0.92,
+                )
+            })
+            .collect();
+
+        let reps = pick_per_bill_representatives(&entries, &[], 0.5);
+        assert_eq!(
+            reps.len(),
+            1,
+            "6 action logs for the same bill must collapse to 1 representative; got {}",
+            reps.len()
+        );
+        // The representative's bill_guid is the canonical bill path —
+        // independent of which log won, all six share it.
+        assert_eq!(
+            crate::rss::bill_guid(reps[0]),
+            "nv-legislation/country:us/state:xx/sessions/2025Special36/bills/AB1",
+            "the representative must carry the bill-level guid, not a log-level one"
+        );
+    }
+
+    /// When multiple logs for the same bill score above the threshold, the
+    /// **highest-scoring** log becomes the representative — not the first
+    /// or newest. The post's text comes from that representative.
+    #[test]
+    fn bluesky_publisher_picks_the_highest_scoring_log_when_multiple_score() {
+        let entries = vec![
+            log_entry(
+                "nv-legislation",
+                "2025Special36",
+                "AB1",
+                "20251111T080000Z.weak.json",
+                0.55,
+            ),
+            log_entry(
+                "nv-legislation",
+                "2025Special36",
+                "AB1",
+                "20251112T080000Z.strong.json",
+                0.95, // highest
+            ),
+            log_entry(
+                "nv-legislation",
+                "2025Special36",
+                "AB1",
+                "20251113T080000Z.mid.json",
+                0.70,
+            ),
+        ];
+
+        let reps = pick_per_bill_representatives(&entries, &[], 0.5);
+        assert_eq!(reps.len(), 1, "must collapse to 1 representative");
+        // The picked rep must be the 0.95-scoring log (the "strong" one),
+        // which the test labels into the log filename so we can read it
+        // straight off `sources.log`.
+        let log_path = reps[0]
+            .get("sources")
+            .and_then(|s| s.get("log"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        assert!(
+            log_path.contains("strong"),
+            "expected the highest-scoring log to be the representative; got {}",
+            log_path
+        );
+    }
+
+    /// A bill posted once writes a **bill-level** GUID to the ledger.
+    /// When the next run discovers a *new* action log for the same bill,
+    /// the bill must NOT re-post — the ledger key is the bill, not the
+    /// log, so future logs are deduplicated to the same key and the
+    /// publisher recognises the bill as already-posted.
+    #[test]
+    fn bluesky_ledger_uses_bill_level_guid_to_prevent_repost_when_new_logs_appear() {
+        // Round 1: post the bill once via its first action log.
+        let bill_path =
+            "nv-legislation/country:us/state:xx/sessions/2025Special36/bills/AB1".to_string();
+
+        let round1 = vec![log_entry(
+            "nv-legislation",
+            "2025Special36",
+            "AB1",
+            "20251111T080000Z.first.json",
+            0.92,
+        )];
+        let reps1 = pick_per_bill_representatives(&round1, &[], 0.5);
+        assert_eq!(reps1.len(), 1);
+        let post1 = render_post(reps1[0], None, None, None);
+        assert_eq!(
+            post1.id, bill_path,
+            "ledger id must be the bill-level guid (no /logs/...) — got {}",
+            post1.id
+        );
+
+        // Simulate writing the ledger.
+        let dir = tempdir().unwrap();
+        let p = bluesky_publisher_default();
+        let job = job_for_publisher("bluesky", &p, dir.path().to_path_buf());
+        let ledger = resolve_ledger_path(&job);
+        append_ledger(&ledger, &post1.id).unwrap();
+
+        // Round 2: a **new** action log for the same bill arrives.
+        let round2 = vec![
+            // The old log is still in the stream (the source walks every
+            // log file on disk every run).
+            log_entry(
+                "nv-legislation",
+                "2025Special36",
+                "AB1",
+                "20251111T080000Z.first.json",
+                0.92,
+            ),
+            // Plus a freshly-arrived second log.
+            log_entry(
+                "nv-legislation",
+                "2025Special36",
+                "AB1",
+                "20251112T080000Z.second.json",
+                0.93,
+            ),
+        ];
+        let reps2 = pick_per_bill_representatives(&round2, &[], 0.5);
+        let post2 = render_post(reps2[0], None, None, None);
+        assert_eq!(
+            post2.id, bill_path,
+            "representative's ledger id must still be the bill-level guid"
+        );
+
+        // The ledger already contains this bill — `run_bluesky` would
+        // filter it out as already-posted. Confirm at the unit-level:
+        let already: HashSet<String> = read_ledger(&ledger)
+            .unwrap()
+            .into_iter()
+            .map(|s| ledger_id_to_bill_key(&s))
+            .collect();
+        assert!(
+            already.contains(&post2.id),
+            "ledger should recognise the bill as already-posted; ledger={:?}, post.id={}",
+            already,
+            post2.id
+        );
+
+        // And confirm we wouldn't append a duplicate.
+        let before = std::fs::read_to_string(&ledger).unwrap();
+        let lines_before = before.lines().count();
+        assert_eq!(
+            lines_before, 1,
+            "ledger should hold exactly one entry for the bill"
+        );
+    }
+
+    /// A pre-fix ledger holding **per-log** GUIDs is still read on
+    /// upgrade — the publisher doesn't crash, and per-bill-log-layout
+    /// entries cleanly suppress re-posts. The session-level-log-layout
+    /// case incurs the documented one-time re-post (see
+    /// `ledger_id_to_bill_key`).
+    #[test]
+    fn bluesky_ledger_respects_legacy_per_log_guids() {
+        // Per-bill-log layout: legacy GUID already carries `/bills/<id>`
+        // before the `/logs/` segment, so stripping `/logs/...` yields
+        // the new bill-level key directly. The bill is recognised as
+        // already-posted and re-posts are suppressed.
+        let legacy_per_bill_log =
+            "wy-legislation/country:us/state:wy/sessions/2025/bills/HB0001/logs/20250101T000000Z.passage.json";
+        let expected_bill_key = "wy-legislation/country:us/state:wy/sessions/2025/bills/HB0001";
+        assert_eq!(
+            ledger_id_to_bill_key(legacy_per_bill_log),
+            expected_bill_key,
+            "per-bill-log legacy entries strip to the bill-level guid cleanly"
+        );
+
+        // Session-level-log layout (OCD-files common case): legacy GUID
+        // ends in `<session>/logs/<file>`; stripping yields the session
+        // prefix, which does NOT match the new bill-level key. We
+        // document the resulting behavior — the bill re-posts once,
+        // then the new bill-level GUID lands in the ledger and never
+        // re-posts again.
+        let legacy_session_log =
+            "nv-legislation/country:us/state:nv/sessions/2025Special36/logs/20251111T080000Z.first.json";
+        assert_eq!(
+            ledger_id_to_bill_key(legacy_session_log),
+            "nv-legislation/country:us/state:nv/sessions/2025Special36",
+            "session-level legacy entries strip to the session prefix — the bill \
+             segment isn't in the legacy path so it can't be recovered. \
+             Bills under this layout re-post once on the first post-upgrade run."
+        );
+
+        // End-to-end: seed a legacy ledger with the per-bill-log entry,
+        // confirm the publisher reads it and recognises the bill as
+        // already-posted (matching the new bill-level GUID a post would
+        // write).
+        let dir = tempdir().unwrap();
+        let p = bluesky_publisher_default();
+        let job = job_for_publisher("bluesky", &p, dir.path().to_path_buf());
+
+        let legacy = legacy_ledger_path(&job);
+        std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        std::fs::write(&legacy, format!("{}\n", legacy_per_bill_log)).unwrap();
+
+        // Build a new HB0001 entry whose `sources.log` happens to be the
+        // per-bill-log path (matches what a post would render).
+        let entry = json!({
+            "id": "HB0001",
+            "bill": { "title": "WY HB0001", "identifier": "HB0001" },
+            "log": { "bill_id": "HB0001" },
+            "sources": {
+                "log": "wy-legislation/country:us/state:wy/sessions/2025/bills/HB0001/logs/20250102T000000Z.next.json"
+            },
+            "tags": { "clean_energy": { "final_score": 0.92 } }
+        });
+        let post = render_post(&entry, None, None, None);
+        assert_eq!(
+            post.id, expected_bill_key,
+            "new post's id is the bill-level guid"
+        );
+
+        // The legacy ledger entry collapses to the same bill-level key,
+        // so the publisher's already-posted set contains the bill.
+        let already: HashSet<String> = read_ledger(&legacy)
+            .unwrap()
+            .into_iter()
+            .map(|s| ledger_id_to_bill_key(&s))
+            .collect();
+        assert!(
+            already.contains(&post.id),
+            "the legacy per-bill-log GUID must collapse to the same bill-level \
+             key the new post writes; ledger={:?}, post.id={}",
+            already,
+            post.id
+        );
+    }
+
+    /// `bill_guid` is the canonical bill key; it strips `/logs/...` from
+    /// `sources.log` and appends `/bills/<bill_id>` (the OCD-files common
+    /// case). Sanity-check the shape and the dedup the publisher relies on.
+    #[test]
+    fn bill_guid_collapses_session_level_logs_to_one_bill_key() {
+        let a = log_entry(
+            "nv-legislation",
+            "2025Special36",
+            "AB1",
+            "20251111T080000Z.a.json",
+            0.9,
+        );
+        let b = log_entry(
+            "nv-legislation",
+            "2025Special36",
+            "AB1",
+            "20251112T080000Z.b.json",
+            0.9,
+        );
+        let c = log_entry(
+            "nv-legislation",
+            "2025Special36",
+            "AB2", // different bill
+            "20251111T080000Z.c.json",
+            0.9,
+        );
+        assert_eq!(crate::rss::bill_guid(&a), crate::rss::bill_guid(&b));
+        assert_ne!(crate::rss::bill_guid(&a), crate::rss::bill_guid(&c));
     }
 }

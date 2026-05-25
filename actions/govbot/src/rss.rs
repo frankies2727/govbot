@@ -275,7 +275,12 @@ pub fn extract_link(entry: &Value, base_url: Option<&str>) -> Option<String> {
     None
 }
 
-/// Extract or generate a unique GUID for the entry
+/// Extract or generate a unique GUID for the entry.
+///
+/// This is a **per-log** GUID — distinct for every action-log file. For a
+/// **per-bill** key (the one publishers should use to dedup so an activist
+/// doesn't see the same bill posted six times under six different action
+/// logs), see [`bill_guid`].
 pub fn extract_guid(entry: &Value) -> String {
     // Use source log path as GUID if available
     if let Some(sources) = entry.get("sources").and_then(|s| s.as_object()) {
@@ -298,6 +303,84 @@ pub fn extract_guid(entry: &Value) -> String {
     format!("{}_{}", timestamp, bill_id)
 }
 
+/// A **per-bill** GUID — the grouping key publishers use to emit one post /
+/// item / row per (jurisdiction, bill_id) rather than one per action log.
+///
+/// Publishers (bluesky, rss, html) receive a result stream where the same
+/// bill emits one record per action-log file (committee referrals, hearings,
+/// passage votes, …). Activists want one item per bill, not N. The
+/// **bill_guid** collapses the N action-log records to a single (jurisdiction,
+/// bill_id) key.
+///
+/// Resolution order — each path produces the same canonical form
+/// `<dataset>/country:.../state:.../sessions/<id>/bills/<bill_id>`:
+///
+///   1. `sources.log` → strip `/logs/<filename>` tail; if the stripped path
+///      already ends in `/bills/<id>` (per-bill-log-directory layout) use it
+///      verbatim, else append `/bills/<bill_id>` (session-level-log-directory
+///      layout — the OCD-files common case).
+///   2. `sources.bill` → strip `/metadata.json` tail. The parent dir IS the
+///      bill dir on disk.
+///   3. fall back to the per-log GUID (see [`extract_guid`]) — preserves the
+///      pre-fix shape when an entry carries no `sources` block at all.
+///
+/// `bill_id` is taken from `bill.identifier`, then `id`, then `log.bill_id`,
+/// matching what publishers already use for rendering.
+pub fn bill_guid(entry: &Value) -> String {
+    // Resolve the bill identifier the publishers already render with.
+    let bill_id = entry
+        .get("bill")
+        .and_then(|b| b.get("identifier"))
+        .and_then(|v| v.as_str())
+        .or_else(|| entry.get("id").and_then(|v| v.as_str()))
+        .or_else(|| {
+            entry
+                .get("log")
+                .and_then(|l| l.get("bill_id"))
+                .and_then(|v| v.as_str())
+        })
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+
+    // 1. `sources.log` — the dominant path. Strip `/logs/...` to get the
+    //    enclosing dir, then ensure it ends in `/bills/<bill_id>`.
+    if let Some(log_path) = entry
+        .get("sources")
+        .and_then(|s| s.get("log"))
+        .and_then(|v| v.as_str())
+    {
+        if let Some(prefix) = log_path.split("/logs/").next() {
+            if !bill_id.is_empty() {
+                let needle = format!("/bills/{}", bill_id);
+                if prefix.ends_with(&needle) {
+                    return prefix.to_string();
+                }
+                return format!("{}{}", prefix, needle);
+            }
+            // No bill_id resolved — the prefix is still a stable dedup key
+            // (collapses all session-level logs to one row, which is a
+            // reasonable fallback when bill_id is missing).
+            return prefix.to_string();
+        }
+    }
+
+    // 2. `sources.bill` — the path to `metadata.json`; its parent dir is
+    //    `bills/<bill_id>`. Strip the trailing `/metadata.json`.
+    if let Some(bill_path) = entry
+        .get("sources")
+        .and_then(|s| s.get("bill"))
+        .and_then(|v| v.as_str())
+    {
+        let trimmed = bill_path
+            .strip_suffix("/metadata.json")
+            .unwrap_or(bill_path);
+        return trimmed.to_string();
+    }
+
+    // 3. No sources at all — fall back to the per-log GUID.
+    extract_guid(entry)
+}
+
 /// Convert JSON Lines entries to RSS feed
 pub fn json_to_rss(
     entries: Vec<Value>,
@@ -310,16 +393,22 @@ pub fn json_to_rss(
     let base_url = base_url.unwrap_or(link);
 
     let mut items = Vec::new();
-    let mut seen_guids = HashSet::new();
+    let mut seen_bills = HashSet::new();
 
     for entry in entries {
-        let guid = extract_guid(&entry);
-
-        // Deduplicate by GUID
-        if seen_guids.contains(&guid) {
+        // Dedup by **bill** — not by action-log path. A bill emits one
+        // record per action-log file (committee referral, hearing, passage
+        // vote …); RSS readers want one item per bill, not N. The first
+        // (newest, since the stream is timestamp-sorted DESC) wins; later
+        // action-log records for the same bill are dropped. The RSS
+        // `<guid>` itself still uses the per-log GUID so a feed reader
+        // doesn't conflate two genuinely different items across feeds.
+        let bill_key = bill_guid(&entry);
+        if seen_bills.contains(&bill_key) {
             continue;
         }
-        seen_guids.insert(guid.clone());
+        seen_bills.insert(bill_key);
+        let guid = extract_guid(&entry);
 
         let mut item_builder = ItemBuilder::default();
 
@@ -497,16 +586,16 @@ pub fn json_to_html(
     let title_str = title.unwrap_or("");
 
     let mut items_html = String::new();
-    let mut seen_guids = HashSet::new();
+    let mut seen_bills = HashSet::new();
 
     for entry in entries {
-        let guid = extract_guid(&entry);
-
-        // Deduplicate by GUID
-        if seen_guids.contains(&guid) {
+        // Dedup by **bill** — see `json_to_rss` for the rationale. One HTML
+        // entry per bill, not one per action log.
+        let bill_key = bill_guid(&entry);
+        if seen_bills.contains(&bill_key) {
             continue;
         }
-        seen_guids.insert(guid);
+        seen_bills.insert(bill_key);
 
         let entry_title = extract_title(&entry);
         let entry_description = extract_description(&entry);

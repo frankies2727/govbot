@@ -284,15 +284,28 @@ pub fn filter_by_tags(entry: &Value, tag_names: &[String]) -> bool {
     false
 }
 
-/// Deduplicate entries by GUID
+/// Deduplicate entries by **bill** (jurisdiction, bill_id) — collapse the
+/// N action-log records a bill emits to a single representative, keeping
+/// the **first** in the stream.
+///
+/// Callers sort by timestamp DESC before this, so the first-per-bill wins
+/// is also the **most recent action log**. The post / feed item /
+/// HTML entry is rendered from that representative.
+///
+/// Before this fix, this function dedup'd by per-log GUID — i.e. it
+/// **did not collapse multiple logs for the same bill**, which let an
+/// activist see the same bill posted six times in a row (NV AB1
+/// 6×, AK HB53 4× on the climate-tracker feed). The bill_guid is the
+/// canonical bill path (`<dataset>/.../bills/<bill_id>`); see
+/// [`rss::bill_guid`].
 pub fn deduplicate_entries(entries: Vec<Value>) -> Vec<Value> {
     let mut seen = HashSet::new();
     let mut result = Vec::new();
 
     for entry in entries {
-        let guid = rss::extract_guid(&entry);
-        if !seen.contains(&guid) {
-            seen.insert(guid);
+        let bill_key = rss::bill_guid(&entry);
+        if !seen.contains(&bill_key) {
+            seen.insert(bill_key);
             result.push(entry);
         }
     }
@@ -452,6 +465,194 @@ mod tests {
         assert!(
             index_html.contains("HTML publisher title"),
             "index.html should carry the html publisher's title (not the rss publisher's)"
+        );
+    }
+
+    // ------------------------------------------------------------
+    // Per-bill dedup regression tests (same Bug as the bluesky one)
+    // ------------------------------------------------------------
+
+    /// Build a synthetic log entry for `bill_id` whose `sources.log`
+    /// embeds `filename` — the shape `govbot source --join bill,tags`
+    /// emits. The `timestamp` is included so the upstream `sort_by_timestamp`
+    /// is exercised the way `run_publish_command` exercises it.
+    fn log(dataset: &str, session: &str, bill_id: &str, filename: &str, ts: &str) -> Value {
+        json!({
+            "id": bill_id,
+            "timestamp": ts,
+            "bill": { "title": format!("Bill {}", bill_id), "identifier": bill_id },
+            "log": { "bill_id": bill_id },
+            "sources": {
+                "log": format!(
+                    "{}/country:us/state:xx/sessions/{}/logs/{}",
+                    dataset, session, filename
+                )
+            },
+            "tags": { "clean_energy": { "final_score": 0.9 } }
+        })
+    }
+
+    /// Six action-log entries for the same NV AB1 bill must collapse to
+    /// **one** entry post-dedup — the bug that put 6 NV AB1 posts on the
+    /// climate-tracker bluesky-pending feed under `datasets: [all]`. RSS
+    /// and HTML feeds share the same dedup (`deduplicate_entries`).
+    #[test]
+    fn deduplicate_entries_collapses_action_logs_to_one_per_bill() {
+        let entries: Vec<Value> = (1..=6)
+            .map(|i| {
+                log(
+                    "nv-legislation",
+                    "2025Special36",
+                    "AB1",
+                    &format!("2025111{}T080000Z.classification.referral.json", i),
+                    &format!("2025111{}T080000Z", i),
+                )
+            })
+            .collect();
+
+        let out = deduplicate_entries(entries);
+        assert_eq!(
+            out.len(),
+            1,
+            "6 action logs for the same bill must dedup to 1; got {}",
+            out.len()
+        );
+    }
+
+    /// The dedup keeps **distinct bills** distinct — only logs *for the
+    /// same bill* are collapsed. A second bill (NV AB2) survives the same
+    /// dedup pass.
+    #[test]
+    fn deduplicate_entries_keeps_distinct_bills() {
+        let entries = vec![
+            log(
+                "nv-legislation",
+                "2025Special36",
+                "AB1",
+                "20251111T080000Z.a.json",
+                "20251111T080000Z",
+            ),
+            log(
+                "nv-legislation",
+                "2025Special36",
+                "AB1",
+                "20251112T080000Z.b.json",
+                "20251112T080000Z",
+            ),
+            log(
+                "nv-legislation",
+                "2025Special36",
+                "AB2",
+                "20251111T080000Z.c.json",
+                "20251111T080000Z",
+            ),
+        ];
+        let out = deduplicate_entries(entries);
+        assert_eq!(out.len(), 2, "AB1 collapses to 1 record; AB2 survives");
+    }
+
+    /// The `rss` publisher emits ONE `<item>` per bill — not one per
+    /// action log. End-to-end check: render an RSS feed from 6 action-log
+    /// records for the same bill and count `<item>` tags.
+    #[test]
+    fn rss_publisher_emits_one_item_per_bill_even_with_multiple_action_logs() {
+        let dir = tempdir().unwrap();
+        let out_dir = dir.path().join("out");
+        let p = Publisher {
+            kind: PublisherKind::Rss,
+            select: None,
+            base_url: Some("https://example.org/test".to_string()),
+            output_dir: Some(out_dir.to_string_lossy().to_string()),
+            output_file: None,
+            title: None,
+            description: None,
+            limit: None,
+            min_score: None,
+            ledger: None,
+            post_template: None,
+        };
+        // Six action logs for NV AB1.
+        let entries: Vec<Value> = (1..=6)
+            .map(|i| {
+                log(
+                    "nv-legislation",
+                    "2025Special36",
+                    "AB1",
+                    &format!("2025111{}T080000Z.classification.referral.json", i),
+                    &format!("2025111{}T080000Z", i),
+                )
+            })
+            .collect();
+        let job = PublishJob {
+            name: "feed",
+            publisher: &p,
+            entries,
+            output_dir_override: None,
+            output_file_override: None,
+            project_dir: dir.path().to_path_buf(),
+            dry_run: false,
+            html_entry_url: None,
+        };
+        run_publisher(&job).expect("rss publisher should run");
+
+        let feed_xml = std::fs::read_to_string(out_dir.join("feed.xml")).unwrap();
+        let item_count = feed_xml.matches("<item>").count();
+        assert_eq!(
+            item_count, 1,
+            "RSS feed must contain exactly one <item> per bill; got {} items for one bill",
+            item_count
+        );
+    }
+
+    /// The `html` publisher emits ONE `<article>` per bill — not one per
+    /// action log. End-to-end check: render the HTML index from 6
+    /// action-log records for the same bill and count `<article>` tags.
+    #[test]
+    fn html_publisher_emits_one_article_per_bill_even_with_multiple_action_logs() {
+        let dir = tempdir().unwrap();
+        let out_dir = dir.path().join("out");
+        let p = Publisher {
+            kind: PublisherKind::Html,
+            select: None,
+            base_url: Some("https://example.org/test".to_string()),
+            output_dir: Some(out_dir.to_string_lossy().to_string()),
+            output_file: None,
+            title: None,
+            description: None,
+            limit: None,
+            min_score: None,
+            ledger: None,
+            post_template: None,
+        };
+        let entries: Vec<Value> = (1..=6)
+            .map(|i| {
+                log(
+                    "nv-legislation",
+                    "2025Special36",
+                    "AB1",
+                    &format!("2025111{}T080000Z.classification.referral.json", i),
+                    &format!("2025111{}T080000Z", i),
+                )
+            })
+            .collect();
+        let job = PublishJob {
+            name: "site",
+            publisher: &p,
+            entries,
+            output_dir_override: None,
+            output_file_override: None,
+            project_dir: dir.path().to_path_buf(),
+            dry_run: false,
+            html_entry_url: None,
+        };
+        run_publisher(&job).expect("html publisher should run");
+
+        let html = std::fs::read_to_string(out_dir.join("index.html")).unwrap();
+        let article_count = html.matches("<article").count();
+        assert_eq!(
+            article_count, 1,
+            "HTML index must contain exactly one <article> per bill; got {} for one bill",
+            article_count
         );
     }
 }

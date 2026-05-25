@@ -2564,27 +2564,50 @@ async fn run_publish_command(cmd: Command) -> anyhow::Result<()> {
         );
 
         // Filter to the publisher's selected tags, dedup, sort.
+        //
+        // The bluesky publisher does its own **score-aware** per-bill dedup
+        // (highest-scoring log per (jurisdiction, bill_id) becomes the
+        // representative — see `bluesky::run_bluesky`); the global
+        // first-wins dedup would force a "newest" winner that drops a
+        // bill whose newest log carries no qualifying tag even when an
+        // older log scored above the threshold. Skip the global dedup for
+        // bluesky so the publisher sees every log for every bill.
         let mut entries: Vec<serde_json::Value> = all_entries
             .iter()
             .filter(|e| filter_by_tags(e, &select))
             .cloned()
             .collect();
-        entries = deduplicate_entries(entries);
+        if publisher.kind != govbot::PublisherKind::Bluesky {
+            entries = deduplicate_entries(entries);
+        }
         entries = sort_by_timestamp(entries);
 
         // Apply the limit: CLI override, else the publisher's, else 100.
+        //
+        // **The limit is a per-bill cap**, not a per-action-log cap — for
+        // non-bluesky publishers that's already true (entries are
+        // pre-dedup'd by bill above). For bluesky we skipped the
+        // pre-dedup, so the entry stream still carries N action-log
+        // records per bill; truncating it here would arbitrarily clip
+        // bills before bluesky's own dedup runs. Skip the limit for
+        // bluesky and let the publisher cap **after** its score-aware
+        // per-bill dedup (a future enhancement; the runtime cost of
+        // posting every qualifying bill is already small relative to
+        // the activist's daily-digest expectations).
         let limit_value: Option<usize> = match cli_limit {
             Some(v) => v,
             None => publisher.resolved_limit(Some(100)),
         };
         let original_count = entries.len();
         if let Some(lim) = limit_value {
-            entries.truncate(lim);
-            if original_count > lim {
-                eprintln!(
-                    "Limited '{}' to {} entries. Use --limit none for all {}.",
-                    name, lim, original_count
-                );
+            if publisher.kind != govbot::PublisherKind::Bluesky {
+                entries.truncate(lim);
+                if original_count > lim {
+                    eprintln!(
+                        "Limited '{}' to {} entries. Use --limit none for all {}.",
+                        name, lim, original_count
+                    );
+                }
             }
         }
 
