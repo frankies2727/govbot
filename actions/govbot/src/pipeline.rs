@@ -114,10 +114,17 @@ pub fn run_pipeline(config_path: &Path, govbot_dir: Option<&str>, dry_run: bool)
     }
 
     // Step 2: run the transform DAG (source | transform... | apply).
+    //
+    // The source stage must honour the manifest's `datasets:` scope — without
+    // it, `govbot source` walks every linked dataset under `.govbot/repos/`
+    // (which can include datasets pulled by an earlier `datasets: [all]` run
+    // and never cleaned up), classifying tens of thousands of records the
+    // current manifest did not declare.
+    let source_repos = source_repos_from_manifest(&manifest.datasets);
     eprintln!();
     eprintln!("=== Step 2/3: Running transforms (source | ... | apply) ===");
     eprintln!();
-    match run_transform_dag(&govbot_bin, &resolved, cwd, govbot_dir) {
+    match run_transform_dag(&govbot_bin, &resolved, cwd, govbot_dir, &source_repos) {
         Ok(false) => {
             eprintln!("⚠️  Transform stage had errors (continuing anyway)");
         }
@@ -298,12 +305,21 @@ fn run_transform_dag(
     transforms: &[(String, ResolvedTransform)],
     cwd: &Path,
     govbot_dir: Option<&str>,
+    source_repos: &[String],
 ) -> Result<bool> {
-    // Stage 0: the source — `govbot source --select docs`.
+    // Stage 0: the source — `govbot source --select docs`. Scope it to the
+    // manifest's declared datasets (an empty list means "every linked
+    // dataset", matching the standalone `govbot source` default).
     let mut source_cmd = Command::new(govbot_bin);
     source_cmd.arg("source").arg("--select").arg("docs");
     if let Some(d) = govbot_dir {
         source_cmd.arg("--govbot-dir").arg(d);
+    }
+    if !source_repos.is_empty() {
+        source_cmd.arg("--repos");
+        for d in source_repos {
+            source_cmd.arg(d);
+        }
     }
     let mut source_child = source_cmd
         .current_dir(cwd)
@@ -399,9 +415,63 @@ fn dir_has_entries(p: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Translate the manifest's `datasets:` list to the `--repos` argv that
+/// scopes the `govbot source` stage inside `run_transform_dag`.
+///
+/// `datasets: [all]` becomes an empty list — `govbot source`'s own sentinel
+/// for "every linked dataset", omitted from the argv so the flag is absent.
+/// Any other list is passed through verbatim; `govbot source --repos <list>`
+/// then walks only the named datasets.
+///
+/// This is the load-bearing piece of [`run_pipeline`]'s step 2: forgetting
+/// to pass `--repos` here caused a bug in which a manifest declaring
+/// `datasets: [wy]` still classified ~4900 records across 52 states because
+/// the cache held datasets from an earlier `[all]` pull.
+fn source_repos_from_manifest(datasets: &[String]) -> Vec<String> {
+    if datasets == ["all"] {
+        Vec::new()
+    } else {
+        datasets.to_vec()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression test for the `datasets:[wy]` scope leak: an `[all]`
+    /// manifest must produce an empty argv list (so `--repos` is omitted —
+    /// `govbot source`'s sentinel for "every linked dataset"), but any other
+    /// list must pass through verbatim so `govbot source --repos <list>`
+    /// scopes the walk. Pre-fix, `run_transform_dag` never passed `--repos`,
+    /// so the manifest's `datasets:` was silently ignored at the source step
+    /// and a `[wy]` manifest still classified ~4900 records across 52 states.
+    #[test]
+    fn source_repos_from_manifest_translates_all_and_scopes() {
+        assert_eq!(
+            source_repos_from_manifest(&["all".to_string()]),
+            Vec::<String>::new(),
+            "`[all]` must collapse to empty so --repos is omitted"
+        );
+        assert_eq!(
+            source_repos_from_manifest(&["wy".to_string()]),
+            vec!["wy".to_string()],
+            "`[wy]` must pass through verbatim"
+        );
+        assert_eq!(
+            source_repos_from_manifest(&["wy".to_string(), "il".to_string()]),
+            vec!["wy".to_string(), "il".to_string()],
+            "`[wy, il]` must pass through verbatim"
+        );
+        // An `[all, wy]` mix is not the `[all]` sentinel — pass through so
+        // the source step at least scopes to the named subset (and treats
+        // the literal `all` as a possibly-missing dataset id, surfacing the
+        // manifest error rather than silently widening to every dataset).
+        assert_eq!(
+            source_repos_from_manifest(&["all".to_string(), "wy".to_string()]),
+            vec!["all".to_string(), "wy".to_string()],
+        );
+    }
 
     /// `govbot run` should detect a project-local dataset seed
     /// (`.govbot/repos/<short>/`) and skip the cache-touching pull substep.
