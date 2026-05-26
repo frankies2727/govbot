@@ -443,9 +443,15 @@ enum Command {
         #[arg(long, default_value = "default", value_parser = ["default", "docs"])]
         select: String,
 
-        /// Per-repo log filter (default: `default`). Mirrors
-        /// `govbot source --filter`.
-        #[arg(long, default_value = "default", value_parser = ["default", "none"])]
+        /// Per-repo log filter (default: `none` — every log entry, for
+        /// back-compat with the CHN-Bluesky-Govbot-Main framework's
+        /// `scripts/post_to_bluesky.py`, which was written against the
+        /// pre-Source-rename `govbot logs` output that did not filter).
+        /// Opt into the action-based filter (drops routine introductions,
+        /// committee referrals, "Bill Number Assigned" lines, etc.) with
+        /// `--filter default`. Same values as `govbot source --filter`,
+        /// only the default differs.
+        #[arg(long, default_value = "none", value_parser = ["default", "none"])]
         filter: String,
 
         /// Sort order (default: DESC). Mirrors `govbot source --sort`.
@@ -1780,20 +1786,23 @@ fn deep_prune_json(value: serde_json::Value) -> serde_json::Value {
 /// Extract timestamp from a path string (after "logs/" and before "_")
 /// Example: "path/to/logs/20250121T000000Z_filename.json" -> "20250121T000000Z"
 fn extract_timestamp_from_path(path: &str) -> Option<String> {
-    // Find the position of "/logs/"
-    if let Some(logs_pos) = path.find("/logs/") {
-        // Get the substring after "/logs/"
-        let after_logs = &path[logs_pos + 6..];
-        // Find the position of "_" after "logs/"
-        if let Some(underscore_pos) = after_logs.find('_') {
-            // Extract the timestamp (between "logs/" and "_")
-            let timestamp = &after_logs[..underscore_pos];
-            if !timestamp.is_empty() {
-                return Some(timestamp.to_string());
-            }
-        }
+    // OCD-files log filenames take two shapes: action-named entries use
+    // `<timestamp>_<action>.json` (e.g. `20250129T022703Z_bill_number_assigned.json`)
+    // and OCD-classification entries use `<timestamp>.classification.<...>.json`
+    // (e.g. `20250131T030931Z.classification.introduction.lower.json`).
+    // The action-based filter (`--filter default`) drops the latter, so the
+    // `_`-only extractor used to be sufficient; once `--filter none` became
+    // the `govbot logs` default for Frankie back-compat, the `.`-separated
+    // entries flow through and need their timestamp projected too.
+    let logs_pos = path.find("/logs/")?;
+    let after_logs = &path[logs_pos + 6..];
+    let separator_pos = after_logs.find(|c: char| c == '_' || c == '.')?;
+    let timestamp = &after_logs[..separator_pos];
+    if timestamp.is_empty() {
+        None
+    } else {
+        Some(timestamp.to_string())
     }
-    None
 }
 
 /// Compute the relative path from `git_dir` to a walked file.
