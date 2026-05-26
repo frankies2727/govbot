@@ -409,6 +409,54 @@ enum Command {
         #[arg(long = "output", value_parser = ["text", "json"], default_value = "text")]
         output: String,
     },
+
+    /// **Deprecated.** Alias for `govbot source` (default mode) preserved so
+    /// existing consumers (the CHN-Bluesky-Govbot-Main framework, anyone
+    /// running `govbot logs > bills.jsonl`) keep working after the
+    /// Logs→Source rename. Prints a deprecation warning to stderr on
+    /// invocation. Will be removed in a future major version.
+    ///
+    /// The flag surface mirrors `govbot source` exactly — every flag that
+    /// `Source` accepts is honored here and forwarded verbatim. Anything
+    /// Frankie's `govbot logs > bills.jsonl` invocation might pass keeps
+    /// working.
+    Logs {
+        /// Datasets to emit (default: every linked dataset). Mirrors
+        /// `govbot source --datasets/--repos`.
+        #[arg(long = "datasets", visible_alias = "repos", num_args = 0..)]
+        repos: Vec<String>,
+
+        /// Per repo limit (default: 100) options: `none` | number. Mirrors
+        /// `govbot source --limit`.
+        #[arg(long, default_value = "100")]
+        limit: String,
+
+        /// Join additional datasets (default: `bill,tags`). Mirrors
+        /// `govbot source --join`.
+        #[arg(long, default_value = "bill,tags")]
+        join: String,
+
+        /// Select/transform fields (default: `default`). Mirrors
+        /// `govbot source --select`. Frankie's `govbot logs > bills.jsonl`
+        /// runs with the default — emitting the full joined record his
+        /// `scripts/post_to_bluesky.py` parses.
+        #[arg(long, default_value = "default", value_parser = ["default", "docs"])]
+        select: String,
+
+        /// Per-repo log filter (default: `default`). Mirrors
+        /// `govbot source --filter`.
+        #[arg(long, default_value = "default", value_parser = ["default", "none"])]
+        filter: String,
+
+        /// Sort order (default: DESC). Mirrors `govbot source --sort`.
+        #[arg(long, default_value = "DESC", value_parser = ["ASC", "DESC"])]
+        sort: String,
+
+        /// Govbot directory (default: $CWD/.govbot/repos, or GOVBOT_DIR env
+        /// var). Mirrors `govbot source --govbot-dir`.
+        #[arg(long = "govbot-dir")]
+        govbot_dir: Option<String>,
+    },
 }
 
 fn get_govbot_dir(govbot_dir: Option<String>) -> anyhow::Result<PathBuf> {
@@ -3619,6 +3667,34 @@ async fn main() -> anyhow::Result<()> {
         Some(cmd @ Command::Ls { .. }) => run_ls_command(cmd),
         Some(cmd @ Command::Search { .. }) => run_search_command(cmd),
         Some(cmd @ Command::Doctor { .. }) => run_doctor_command(cmd),
+        Some(Command::Logs {
+            repos,
+            limit,
+            join,
+            select,
+            filter,
+            sort,
+            govbot_dir,
+        }) => {
+            // Deprecation warning MUST go to stderr — stdout is the
+            // bills.jsonl payload `govbot logs > bills.jsonl` consumers
+            // (the CHN-Bluesky-Govbot-Main framework) pipe to disk.
+            // Printing to stdout would corrupt the JSON-Lines stream.
+            eprintln!(
+                "warning: `govbot logs` is deprecated; use `govbot source` instead. The old form will be removed in a future major version."
+            );
+            // Delegate to the canonical source handler with identical args.
+            run_source_command(Command::Source {
+                repos,
+                limit,
+                join,
+                select,
+                filter,
+                sort,
+                govbot_dir,
+            })
+            .await
+        }
         None => {
             let cwd = std::env::current_dir()?;
             let config_path = cwd.join("govbot.yml");

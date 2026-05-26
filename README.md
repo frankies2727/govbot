@@ -152,6 +152,7 @@ govbot ls                  # list the manifest's datasets + what is cached local
 govbot pull all            # clone/update every dataset
 govbot pull il ca ny       # clone/update specific datasets
 govbot source              # stream dataset records as JSON Lines
+govbot logs                # deprecated alias for `govbot source` (default mode), kept for back-compat with the CHN-Bluesky-Govbot-Main framework's `govbot logs > bills.jsonl`
 govbot source --select docs | fastclass classify - classifier=./classifier | govbot apply
 govbot apply               # persist a fastclass result stream under <project>/tags/
 govbot publish             # run every configured publisher (RSS / HTML / JSON / DuckDB / Bluesky)

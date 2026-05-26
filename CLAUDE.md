@@ -126,6 +126,7 @@ govbot               # Scaffold govbot.yml (interactive wizard), then run the pi
 govbot pull all      # Download all state legislation datasets
 govbot pull wy il    # Download specific states
 govbot source        # Stream legislative activity as JSON Lines
+govbot logs          # Deprecated alias for `govbot source` (default mode); back-compat with the CHN-Bluesky-Govbot-Main framework's `govbot logs > bills.jsonl`
 govbot source --select docs | fastclass classify - classifier=./classifier | govbot apply
 govbot load          # Load bill metadata into DuckDB
 govbot publish       # Run the manifest's publishers (RSS / HTML / JSON / DuckDB / Bluesky)
