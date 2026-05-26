@@ -1,0 +1,26 @@
+# Minimal-but-realistic Frankie-style topic config for tests.
+# Shape mirrors CHN-Bluesky-Govbot's topics/transportation/config.yml.
+name: transportation
+display_name: Transportation
+default_emoji: "🚗"
+keywords:
+  - public transit
+  - bus rapid transit
+  - light rail
+  - high-speed rail
+  - bike lane
+  - pedestrian safety
+  - vision zero
+  - electric vehicle
+  - EV charging
+  - road infrastructure
+emoji_map:
+  rail: "🚆"
+  bus: "🚌"
+  bicycle: "🚲"
+digest_title: "🗳️ Transportation Bills Weekly Digest"
+topic: "transportation"
+# Permissive — Frankie configs may carry extra fields the migration tool
+# does not translate yet. They must parse without error.
+schedule: weekly
+timezone: America/Chicago

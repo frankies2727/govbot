@@ -9,6 +9,7 @@ pub mod config;
 pub mod error;
 pub mod filter;
 pub mod git;
+pub mod init_from_frankie;
 pub mod lock;
 pub mod pipeline;
 pub mod processor;

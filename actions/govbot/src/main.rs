@@ -329,7 +329,23 @@ enum Command {
 
     /// Scaffold a new govbot.yml in the current directory (the setup wizard).
     /// Interactive in a TTY; writes sensible defaults when non-interactive.
-    Init,
+    ///
+    /// `--from-frankie-config <path>` bypasses the wizard and scaffolds a
+    /// govbot+fastclass project skeleton from a Frankie-style
+    /// `topics/<name>/config.yml` — the migration tool for existing
+    /// CHN-Bluesky-Govbot topic maintainers moving to the new stack.
+    Init {
+        /// Path to a Frankie-style topics/<name>/config.yml. When set, govbot init
+        /// generates a govbot+fastclass project skeleton from the CHN-Bluesky-Govbot
+        /// framework's per-topic shape (keyword list + emoji map + summary focus)
+        /// instead of running the interactive wizard.
+        #[arg(long = "from-frankie-config")]
+        from_frankie_config: Option<String>,
+
+        /// Where to scaffold the project. Default: cwd.
+        #[arg(long = "into")]
+        into: Option<String>,
+    },
 
     /// Add one or more datasets to the project's `govbot.yml` `datasets:` list.
     /// Each id is validated against the registry before it is added.
@@ -3557,17 +3573,45 @@ async fn main() -> anyhow::Result<()> {
             }
             govbot::pipeline::run_pipeline(&config_path, govbot_dir.as_deref(), dry_run)
         }
-        Some(Command::Init) => {
-            let cwd = std::env::current_dir()?;
-            let config_path = cwd.join("govbot.yml");
+        Some(Command::Init {
+            from_frankie_config,
+            into,
+        }) => {
+            // Migration path: --from-frankie-config bypasses the wizard and
+            // scaffolds from a Frankie-style topics/<name>/config.yml. The
+            // init_from_frankie module handles its own pre-flight checks
+            // (refusing to overwrite an existing govbot.yml in <into>).
+            if let Some(frankie_path) = from_frankie_config {
+                let into_path = into.map(std::path::PathBuf::from);
+                return govbot::init_from_frankie::run(
+                    std::path::Path::new(&frankie_path),
+                    into_path.as_deref(),
+                );
+            }
+
+            // Wizard / defaults path. `--into` is honored here too so a
+            // non-Frankie scaffold can target a directory other than cwd.
+            let into_provided = into.is_some();
+            let target = match into {
+                Some(p) => {
+                    let path = std::path::PathBuf::from(&p);
+                    std::fs::create_dir_all(&path)?;
+                    path
+                }
+                None => std::env::current_dir()?,
+            };
+            let config_path = target.join("govbot.yml");
             if config_path.exists() {
-                eprintln!("govbot.yml already exists in {}.", cwd.display());
+                eprintln!("govbot.yml already exists in {}.", target.display());
                 return Ok(());
             }
-            if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+            // The interactive wizard always writes to cwd; only run it when
+            // the user did not pass --into (otherwise honor --into via the
+            // non-interactive default writer).
+            if !into_provided && std::io::IsTerminal::is_terminal(&std::io::stdin()) {
                 govbot::wizard::run_wizard()
             } else {
-                govbot::wizard::write_default_files(&cwd)
+                govbot::wizard::write_default_files(&target)
             }
         }
         Some(cmd @ Command::Add { .. }) => run_add_command(cmd),
