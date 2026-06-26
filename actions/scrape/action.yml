@@ -294,26 +294,55 @@ runs:
         SUMMARY_FILE="${GITHUB_WORKSPACE}/scrape-summary.json"
         TARBALL="${GITHUB_WORKSPACE}/scrape-snapshot-nightly.tgz"
 
-        # Check if scrape failed by reading exit code from summary
-        if [ -f "$SUMMARY_FILE" ]; then
-          EXIT_CODE=$(jq -r '.exit_code // 0' "$SUMMARY_FILE")
-
-          if [ "$EXIT_CODE" != "0" ]; then
-            # If a tarball is available (fresh or fallback), treat as a soft failure.
-            # This covers out-of-session states where the scraper finds 0 results
-            # but there is valid prior data to hand off to the formatter.
-            if [ -f "$TARBALL" ]; then
-              echo "⚠️ Scrape exited non-zero ($EXIT_CODE) but fallback data is available — continuing"
-            else
-              echo "❌ Scrape failed with exit code $EXIT_CODE and no data available"
-              echo "::error::Scrape failed for ${{ inputs.state }}. Check the summary above for details."
-              exit 1
-            fi
-          else
-            echo "✅ Scrape succeeded"
-          fi
-        else
+        if [ ! -f "$SUMMARY_FILE" ]; then
           echo "⚠️ No summary file found, assuming success"
+          exit 0
+        fi
+
+        EXIT_CODE=$(jq -r '.exit_code // 0' "$SUMMARY_FILE")
+        FAILURE_TYPE=$(jq -r '.failure_type // "UNKNOWN"' "$SUMMARY_FILE")
+        IS_ACTIVE_BLOCK=$(jq -r '.is_active_block // false' "$SUMMARY_FILE")
+
+        if [ "$EXIT_CODE" = "0" ]; then
+          echo "✅ Scrape succeeded (failure_type: $FAILURE_TYPE)"
+          exit 0
+        fi
+
+        # Active blocks (N1, N3, N4, H1): alert loudly regardless of fallback.
+        # A state blocking our scraper should never pass silently — stale data
+        # accumulates unnoticed and the blocking goes unreported.
+        if [ "$IS_ACTIVE_BLOCK" = "true" ]; then
+          TARBALL_AGE=""
+          if [ -f "$TARBALL" ]; then
+            TARBALL_MTIME=$(stat -c %Y "$TARBALL" 2>/dev/null || stat -f %m "$TARBALL" 2>/dev/null || echo "0")
+            NOW=$(date +%s)
+            DAYS_OLD=$(( (NOW - TARBALL_MTIME) / 86400 ))
+            TARBALL_AGE=" Fallback data is ${DAYS_OLD} day(s) old."
+          fi
+          echo "🚨 ACTIVE BLOCK DETECTED ($FAILURE_TYPE) for ${{ inputs.state }}.$TARBALL_AGE"
+          echo "::error::${{ inputs.state }} scraper is being actively blocked ($FAILURE_TYPE). Data may be stale.$TARBALL_AGE"
+          # Do not exit 1 if we have fallback data — formatter can still run.
+          # But the ::error:: annotation marks the action red so it is visible.
+          if [ ! -f "$TARBALL" ]; then
+            exit 1
+          fi
+          exit 0
+        fi
+
+        # Out of session (S1, S2): benign, no alert needed.
+        if [[ "$FAILURE_TYPE" == S1_* ]] || [[ "$FAILURE_TYPE" == S2_* ]]; then
+          echo "ℹ️ Legislature out of session ($FAILURE_TYPE) — using fallback data"
+          exit 0
+        fi
+
+        # All other failures: warn and use fallback if available, hard-fail if not.
+        if [ -f "$TARBALL" ]; then
+          echo "⚠️ Scrape failed ($FAILURE_TYPE) but fallback data is available — continuing"
+          echo "::warning::${{ inputs.state }} scrape failed ($FAILURE_TYPE). Running on fallback data."
+        else
+          echo "❌ Scrape failed ($FAILURE_TYPE) and no fallback data available"
+          echo "::error::Scrape failed for ${{ inputs.state }} ($FAILURE_TYPE). No fallback data available."
+          exit 1
         fi
 
     - name: Extract files to workspace

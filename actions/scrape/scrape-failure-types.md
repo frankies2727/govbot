@@ -78,7 +78,7 @@ S3, S4, S5, S6  →  SCRAPER BROKEN — warn; use stale fallback; needs upstream
 
 ## TODO
 
-- [ ] Encode `failure_type` field in `scrape-summary.json` so `action.yml` can act on it
-- [ ] Surface stale-data age in GitHub Actions summary when fallback is used
-- [ ] For active blocks (N1, N3, H1): post a visible `::error::` annotation even when fallback succeeds
+- [x] Encode `failure_type` and `is_active_block` fields in `scrape-summary.json` — done in `scrape.sh`
+- [x] Surface stale-data age in GitHub Actions summary when fallback is used — done in `action.yml`
+- [x] For active blocks (N1, N3, N4, H1): post a visible `::error::` annotation even when fallback succeeds — done in `action.yml`
 - [ ] Investigate TX specifically — route scrape through non-GitHub-Actions IP to confirm IP block vs. all-traffic block

@@ -186,11 +186,55 @@ else
   ERROR_COUNT=$(echo "$OTHER_ERRORS" | wc -l | tr -d ' ')
 fi
 
+# Classify failure type (see scrape-failure-types.md for full reference)
+SCRAPE_LOG_ALL=$(cat "$SCRAPE_LOG" 2>/dev/null || echo "")
+IS_ACTIVE_BLOCK="false"
+
+if [ "$exit_code" -eq 0 ]; then
+  FAILURE_TYPE="NONE"
+elif echo "$SCRAPE_LOG_ALL" | grep -qE "ConnectionRefusedError|Errno 111"; then
+  FAILURE_TYPE="N1_ACTIVE_BLOCK"
+  IS_ACTIVE_BLOCK="true"
+elif echo "$SCRAPE_LOG_ALL" | grep -qE "ConnectionResetError"; then
+  FAILURE_TYPE="N3_ACTIVE_BLOCK"
+  IS_ACTIVE_BLOCK="true"
+elif echo "$SCRAPE_LOG_ALL" | grep -qE "403.*(Forbidden|forbidden)|Forbidden.*403"; then
+  FAILURE_TYPE="H1_ACTIVE_BLOCK"
+  IS_ACTIVE_BLOCK="true"
+elif echo "$SCRAPE_LOG_ALL" | grep -qE "Name or service not known|nodename nor servname provided|EAI_NONAME"; then
+  FAILURE_TYPE="N4_DNS_FAILURE"
+  IS_ACTIVE_BLOCK="true"
+elif echo "$SCRAPE_LOG_ALL" | grep -qE "429|Too Many Requests"; then
+  FAILURE_TYPE="H3_RATE_LIMITED"
+elif echo "$SCRAPE_LOG_ALL" | grep -qE "TimeoutError|ConnectTimeoutError|timed out|Errno 110"; then
+  FAILURE_TYPE="N2_CONNECTIVITY"
+elif echo "$SCRAPE_LOG_ALL" | grep -qE "503|Service Unavailable"; then
+  FAILURE_TYPE="H4_SERVER_DOWN"
+elif echo "$SCRAPE_LOG_ALL" | grep -qE "401|Unauthorized"; then
+  FAILURE_TYPE="H2_AUTH_FAILURE"
+elif echo "$SCRAPE_LOG_ALL" | grep -qE "ScrapeError.*no objects returned|no objects returned"; then
+  FAILURE_TYPE="S1_OUT_OF_SESSION"
+elif echo "$SCRAPE_LOG_ALL" | grep -qE "contains no matching files"; then
+  FAILURE_TYPE="S2_OUT_OF_SESSION"
+elif echo "$SCRAPE_LOG_ALL" | grep -qE "AssertionError.*[Ss]ession"; then
+  FAILURE_TYPE="S3_SESSION_CONFIG"
+elif echo "$SCRAPE_LOG_ALL" | grep -qE "ScrapeValueError|validation.*failed|failed.*validation"; then
+  FAILURE_TYPE="S6_VALIDATION"
+elif echo "$SCRAPE_LOG_ALL" | grep -qE "KeyError"; then
+  FAILURE_TYPE="S4_SITE_STRUCTURE"
+elif echo "$SCRAPE_LOG_ALL" | grep -qE "ValueError|IndexError"; then
+  FAILURE_TYPE="S5_SITE_STRUCTURE"
+else
+  FAILURE_TYPE="UNKNOWN"
+fi
+
 # Write summary JSON
 cat > "$SUMMARY_FILE" <<EOF
 {
   "state": "${STATE}",
   "exit_code": ${exit_code},
+  "failure_type": "${FAILURE_TYPE}",
+  "is_active_block": ${IS_ACTIVE_BLOCK},
   "objects": {
     "bill": ${BILL_COUNT:-0},
     "vote_event": ${VOTE_EVENT_COUNT:-0},
