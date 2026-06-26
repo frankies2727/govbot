@@ -53,6 +53,7 @@ sample_data/*
 # Project documentation (local development notes)
 project_docs/*
 WORKFLOW_PREFERENCES.md
+actions/scrape/session-notes-*.md
 
 # Temporary files
 *.tmp

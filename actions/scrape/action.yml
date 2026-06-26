@@ -229,6 +229,8 @@ runs:
           DURATION=$(jq -r '.duration // "unknown"' "$SUMMARY_FILE")
           ERROR_COUNT=$(jq -r '.error_count // 0' "$SUMMARY_FILE")
           ERRORS=$(jq -r '.errors | if length > 0 then .[] else empty end' "$SUMMARY_FILE" 2>/dev/null || echo "")
+          FAILURE_TYPE=$(jq -r '.failure_type // "NONE"' "$SUMMARY_FILE")
+          IS_ACTIVE_BLOCK=$(jq -r '.is_active_block // false' "$SUMMARY_FILE")
         else
           BILL_COUNT="N/A"
           VOTE_EVENT_COUNT="N/A"
@@ -238,6 +240,8 @@ runs:
           DURATION="N/A"
           ERROR_COUNT=0
           ERRORS=""
+          FAILURE_TYPE="NONE"
+          IS_ACTIVE_BLOCK="false"
         fi
 
         # Calculate metadata total
@@ -263,6 +267,13 @@ runs:
         echo "| ⏱️ Duration | $DURATION |" >> $GITHUB_STEP_SUMMARY
         echo "| 📦 Source | $SOURCE |" >> $GITHUB_STEP_SUMMARY
         echo "| Status | $STATUS |" >> $GITHUB_STEP_SUMMARY
+        if [ "${FAILURE_TYPE:-NONE}" != "NONE" ]; then
+          if [ "${IS_ACTIVE_BLOCK:-false}" = "true" ]; then
+            echo "| 🚨 Failure Type | \`$FAILURE_TYPE\` — **ACTIVE BLOCK** |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| ⚠️ Failure Type | \`$FAILURE_TYPE\` |" >> $GITHUB_STEP_SUMMARY
+          fi
+        fi
 
         # Show errors if any (only if scrape actually failed, or if there are critical errors)
         EXIT_CODE=$(jq -r '.exit_code // 0' "$SUMMARY_FILE" 2>/dev/null || echo "0")
