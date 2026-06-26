@@ -187,45 +187,45 @@ else
 fi
 
 # Classify failure type (see scrape-failure-types.md for full reference)
-SCRAPE_LOG_ALL=$(cat "$SCRAPE_LOG" 2>/dev/null || echo "")
+# Grep the log file directly — avoids broken-pipe errors from piping large variables through echo.
 IS_ACTIVE_BLOCK="false"
 
 if [ "$exit_code" -eq 0 ]; then
   FAILURE_TYPE="NONE"
-elif echo "$SCRAPE_LOG_ALL" | grep -qE "ConnectionRefusedError|Errno 111"; then
+elif grep -qE "ConnectionRefusedError|Errno 111" "$SCRAPE_LOG" 2>/dev/null; then
   FAILURE_TYPE="N1_ACTIVE_BLOCK"
   IS_ACTIVE_BLOCK="true"
-elif echo "$SCRAPE_LOG_ALL" | grep -qE "ConnectionResetError"; then
+elif grep -qE "ConnectionResetError" "$SCRAPE_LOG" 2>/dev/null; then
   FAILURE_TYPE="N3_ACTIVE_BLOCK"
   IS_ACTIVE_BLOCK="true"
-elif echo "$SCRAPE_LOG_ALL" | grep -qE "403.*(Forbidden|forbidden)|Forbidden.*403"; then
+elif grep -qE "403.*(Forbidden|forbidden)|Forbidden.*403" "$SCRAPE_LOG" 2>/dev/null; then
   FAILURE_TYPE="H1_ACTIVE_BLOCK"
   IS_ACTIVE_BLOCK="true"
-elif echo "$SCRAPE_LOG_ALL" | grep -qE "Name or service not known|nodename nor servname provided|EAI_NONAME"; then
+elif grep -qE "Name or service not known|nodename nor servname provided|EAI_NONAME" "$SCRAPE_LOG" 2>/dev/null; then
   FAILURE_TYPE="N4_DNS_FAILURE"
   IS_ACTIVE_BLOCK="true"
-elif echo "$SCRAPE_LOG_ALL" | grep -qE "429|Too Many Requests"; then
+elif grep -qE "429|Too Many Requests" "$SCRAPE_LOG" 2>/dev/null; then
   FAILURE_TYPE="H3_RATE_LIMITED"
-elif echo "$SCRAPE_LOG_ALL" | grep -qE "TimeoutError|ConnectTimeoutError|timed out|Errno 110"; then
+elif grep -qE "TimeoutError|ConnectTimeoutError|timed out|Errno 110|RemoteDisconnected|Connection aborted" "$SCRAPE_LOG" 2>/dev/null; then
   FAILURE_TYPE="N2_CONNECTIVITY"
-elif echo "$SCRAPE_LOG_ALL" | grep -qE "503|Service Unavailable"; then
+elif grep -qE "503|Service Unavailable" "$SCRAPE_LOG" 2>/dev/null; then
   FAILURE_TYPE="H4_SERVER_DOWN"
-elif echo "$SCRAPE_LOG_ALL" | grep -qE "ScrapeValueError|validation.*failed|failed.*validation"; then
+elif grep -qE "ScrapeValueError|validation.*failed|failed.*validation" "$SCRAPE_LOG" 2>/dev/null; then
   # Check before H2 — ScrapeValueError is a specific openstates schema failure, not an auth issue.
   # Logs can contain "401" or "Unauthorized" incidentally (e.g. DC uses Authorization header)
   # and would otherwise be misclassified as H2_AUTH_FAILURE.
   FAILURE_TYPE="S6_VALIDATION"
-elif echo "$SCRAPE_LOG_ALL" | grep -qE "401|Unauthorized"; then
+elif grep -qE "401|Unauthorized" "$SCRAPE_LOG" 2>/dev/null; then
   FAILURE_TYPE="H2_AUTH_FAILURE"
-elif echo "$SCRAPE_LOG_ALL" | grep -qE "ScrapeError.*no objects returned|no objects returned"; then
+elif grep -qE "ScrapeError.*no objects returned|no objects returned" "$SCRAPE_LOG" 2>/dev/null; then
   FAILURE_TYPE="S1_OUT_OF_SESSION"
-elif echo "$SCRAPE_LOG_ALL" | grep -qE "contains no matching files"; then
+elif grep -qE "contains no matching files" "$SCRAPE_LOG" 2>/dev/null; then
   FAILURE_TYPE="S2_OUT_OF_SESSION"
-elif echo "$SCRAPE_LOG_ALL" | grep -qE "AssertionError.*[Ss]ession"; then
+elif grep -qE "AssertionError.*[Ss]ession" "$SCRAPE_LOG" 2>/dev/null; then
   FAILURE_TYPE="S3_SESSION_CONFIG"
-elif echo "$SCRAPE_LOG_ALL" | grep -qE "KeyError"; then
+elif grep -qE "KeyError" "$SCRAPE_LOG" 2>/dev/null; then
   FAILURE_TYPE="S4_SITE_STRUCTURE"
-elif echo "$SCRAPE_LOG_ALL" | grep -qE "ValueError|IndexError"; then
+elif grep -qE "ValueError|IndexError" "$SCRAPE_LOG" 2>/dev/null; then
   FAILURE_TYPE="S5_SITE_STRUCTURE"
 else
   FAILURE_TYPE="UNKNOWN"
