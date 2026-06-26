@@ -210,6 +210,11 @@ elif echo "$SCRAPE_LOG_ALL" | grep -qE "TimeoutError|ConnectTimeoutError|timed o
   FAILURE_TYPE="N2_CONNECTIVITY"
 elif echo "$SCRAPE_LOG_ALL" | grep -qE "503|Service Unavailable"; then
   FAILURE_TYPE="H4_SERVER_DOWN"
+elif echo "$SCRAPE_LOG_ALL" | grep -qE "ScrapeValueError|validation.*failed|failed.*validation"; then
+  # Check before H2 — ScrapeValueError is a specific openstates schema failure, not an auth issue.
+  # Logs can contain "401" or "Unauthorized" incidentally (e.g. DC uses Authorization header)
+  # and would otherwise be misclassified as H2_AUTH_FAILURE.
+  FAILURE_TYPE="S6_VALIDATION"
 elif echo "$SCRAPE_LOG_ALL" | grep -qE "401|Unauthorized"; then
   FAILURE_TYPE="H2_AUTH_FAILURE"
 elif echo "$SCRAPE_LOG_ALL" | grep -qE "ScrapeError.*no objects returned|no objects returned"; then
@@ -218,8 +223,6 @@ elif echo "$SCRAPE_LOG_ALL" | grep -qE "contains no matching files"; then
   FAILURE_TYPE="S2_OUT_OF_SESSION"
 elif echo "$SCRAPE_LOG_ALL" | grep -qE "AssertionError.*[Ss]ession"; then
   FAILURE_TYPE="S3_SESSION_CONFIG"
-elif echo "$SCRAPE_LOG_ALL" | grep -qE "ScrapeValueError|validation.*failed|failed.*validation"; then
-  FAILURE_TYPE="S6_VALIDATION"
 elif echo "$SCRAPE_LOG_ALL" | grep -qE "KeyError"; then
   FAILURE_TYPE="S4_SITE_STRUCTURE"
 elif echo "$SCRAPE_LOG_ALL" | grep -qE "ValueError|IndexError"; then

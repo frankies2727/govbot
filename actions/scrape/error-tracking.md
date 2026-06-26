@@ -67,7 +67,7 @@ Scraper runs and fetches data, but bill records fail internal validation.
 | California | ca | ✅ OK | | |
 | Colorado | co | ✅ OK | | |
 | Connecticut | ct | ❌ Broken | `ScrapeError: no objects returned from CTBillScraper scrape` | Category A — Legislature likely out of session |
-| District of Columbia | dc | ❌ Broken | `ScrapeValueError: validation of Bill failed` | Category C — OCD validation error on bill data. Requires `DC_API_KEY` secret (confirmed present). |
+| District of Columbia | dc | ❌ Broken | `ScrapeValueError: validation of Bill failed: None is not of type 'string'` | Category C — Non-PDF attachments in `leg_details["actions"]` set `mimetype=None`, failing OCD schema validation on `media_type`. Scraper crashes mid-run; bills after the failing record are dropped. DC_API_KEY is working fine. PR submitted to openstates/openstates-scrapers: fix/dc-media-type-null. |
 | Delaware | de | ✅ OK | | |
 | Florida | fl | ✅ OK | | |
 | Georgia | ga | ✅ OK | | |
