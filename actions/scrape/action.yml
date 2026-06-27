@@ -409,6 +409,7 @@ runs:
         # Configure git
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
+        git config --local http.postBuffer 524288000
 
         # Add scraped files
         git add "_data/${{ inputs.state }}/"
