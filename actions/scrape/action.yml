@@ -29,6 +29,10 @@ inputs:
     description: "JSON object with API keys for states that require them (e.g., DC_API_KEY, NEW_YORK_API_KEY, INDIANA_API_KEY, USER_AGENT). Note: Virginia uses csv_bills scraper and requires no API key."
     required: false
     default: "{}"
+  docker-image:
+    description: "Full Docker image reference to use for scraping (e.g., ghcr.io/govbot-openstates-scrapers/openstates-scrapers:tx-89r-backfill). Defaults to openstates/scrapers:latest."
+    required: false
+    default: "openstates/scrapers:latest"
 
 outputs:
   scrape-artifact-name:
@@ -72,11 +76,14 @@ runs:
       shell: bash
       working-directory: ${{ runner.temp }}
       env:
-        DOCKER_IMAGE_TAG: latest
+        DOCKER_IMAGE: ${{ inputs.docker-image }}
         API_KEYS_JSON: ${{ inputs.api-keys }}
       run: |
         set -euo pipefail
-        # Persist image tag for later steps (manifest)
+        # Persist image for later steps (manifest)
+        echo "DOCKER_IMAGE=${DOCKER_IMAGE}" >> "${GITHUB_ENV}"
+        # Extract tag portion for manifest (last part after colon, or 'latest')
+        DOCKER_IMAGE_TAG="${DOCKER_IMAGE##*:}"
         echo "DOCKER_IMAGE_TAG=${DOCKER_IMAGE_TAG}" >> "${GITHUB_ENV}"
 
         # Use CA-specific script for California (MySQL-based)
@@ -84,7 +91,7 @@ runs:
           echo "🏛️ Using California-specific MySQL scraper..."
           bash "${{ github.action_path }}/scrape-ca.sh" "$(pwd)" "${{ github.workspace }}" "${DOCKER_IMAGE_TAG}" || true
         else
-          bash "${{ github.action_path }}/scrape.sh" "${{ inputs.state }}" "${DOCKER_IMAGE_TAG}" "$(pwd)" "${{ github.workspace }}" "${API_KEYS_JSON}" || true
+          bash "${{ github.action_path }}/scrape.sh" "${{ inputs.state }}" "${DOCKER_IMAGE}" "$(pwd)" "${{ github.workspace }}" "${API_KEYS_JSON}" || true
         fi
 
         # Check if tarball was created

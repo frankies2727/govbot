@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Usage: scrape.sh <state> [DOCKER_IMAGE_TAG] [working_dir] [output_dir] [api_keys_json]
+# Usage: scrape.sh <state> [DOCKER_IMAGE] [working_dir] [output_dir] [api_keys_json]
 #   state: State abbreviation (e.g., "id", "il", "tx", "ny", or "usa")
-#   DOCKER_IMAGE_TAG: Docker image tag to use (defaults to "latest")
+#   DOCKER_IMAGE: Full Docker image reference (defaults to "openstates/scrapers:latest")
 #   working_dir: Optional working directory (defaults to current directory)
 #   output_dir: Optional output directory for tarball (defaults to current directory)
 #   api_keys_json: Optional JSON object with API keys (defaults to "{}")
 
 STATE="${1:-}"
-DOCKER_IMAGE_TAG="${2:-latest}"
+DOCKER_IMAGE="${2:-openstates/scrapers:latest}"
 WORKING_DIR="${3:-$(pwd)}"
 OUTPUT_DIR="${4:-$(pwd)}"
 API_KEYS_JSON="${5:-{}}"
@@ -60,7 +60,7 @@ fi
 echo "🕷️ Scraping ${STATE} (with retries + DNS override)..."
 exit_code=1
 for i in 1 2 3; do
-  docker pull openstates/scrapers:${DOCKER_IMAGE_TAG} || true
+  docker pull ${DOCKER_IMAGE} || true
   # Capture output to log file while still displaying it
   # Virginia uses csv_bills scraper (no API key needed)
   # NOTE: VA 2026 session starts Jan 14, 2026. Will fail until openstates-scrapers
@@ -71,7 +71,7 @@ for i in 1 2 3; do
         -v "$(pwd)/_working/_data":/opt/openstates/openstates/_data \
         -v "$(pwd)/_working/_cache":/opt/openstates/openstates/_cache \
         "${DOCKER_ENV_FLAGS[@]+"${DOCKER_ENV_FLAGS[@]}"}" \
-        openstates/scrapers:${DOCKER_IMAGE_TAG} \
+        ${DOCKER_IMAGE} \
         ${STATE} --session=2025 csv_bills --scrape --fastmode 2>&1 | tee -a "$SCRAPE_LOG"
     then
       exit_code=0
@@ -82,7 +82,7 @@ for i in 1 2 3; do
       -v "$(pwd)/_working/_data":/opt/openstates/openstates/_data \
       -v "$(pwd)/_working/_cache":/opt/openstates/openstates/_cache \
       "${DOCKER_ENV_FLAGS[@]+"${DOCKER_ENV_FLAGS[@]}"}" \
-      openstates/scrapers:${DOCKER_IMAGE_TAG} \
+      ${DOCKER_IMAGE} \
       ${STATE} bills --scrape --fastmode 2>&1 | tee -a "$SCRAPE_LOG"
   then
     exit_code=0
