@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Usage: scrape.sh <state> [DOCKER_IMAGE_TAG] [working_dir] [output_dir] [api_keys_json]
+# Usage: scrape.sh <state> [DOCKER_IMAGE] [working_dir] [output_dir] [api_keys_json]
 #   state: State abbreviation (e.g., "id", "il", "tx", "ny", or "usa")
-#   DOCKER_IMAGE_TAG: Docker image tag to use (defaults to "latest")
+#   DOCKER_IMAGE: Full Docker image reference (defaults to "openstates/scrapers:latest")
 #   working_dir: Optional working directory (defaults to current directory)
 #   output_dir: Optional output directory for tarball (defaults to current directory)
 #   api_keys_json: Optional JSON object with API keys (defaults to "{}")
 
 STATE="${1:-}"
-DOCKER_IMAGE_TAG="${2:-latest}"
+DOCKER_IMAGE="${2:-openstates/scrapers:latest}"
 WORKING_DIR="${3:-$(pwd)}"
 OUTPUT_DIR="${4:-$(pwd)}"
 API_KEYS_JSON="${5:-{}}"
@@ -60,7 +60,7 @@ fi
 echo "🕷️ Scraping ${STATE} (with retries + DNS override)..."
 exit_code=1
 for i in 1 2 3; do
-  docker pull openstates/scrapers:${DOCKER_IMAGE_TAG} || true
+  docker pull ${DOCKER_IMAGE} || true
   # Capture output to log file while still displaying it
   # Virginia uses csv_bills scraper (no API key needed)
   # NOTE: VA 2026 session starts Jan 14, 2026. Will fail until openstates-scrapers
@@ -71,7 +71,7 @@ for i in 1 2 3; do
         -v "$(pwd)/_working/_data":/opt/openstates/openstates/_data \
         -v "$(pwd)/_working/_cache":/opt/openstates/openstates/_cache \
         "${DOCKER_ENV_FLAGS[@]+"${DOCKER_ENV_FLAGS[@]}"}" \
-        openstates/scrapers:${DOCKER_IMAGE_TAG} \
+        ${DOCKER_IMAGE} \
         ${STATE} --session=2025 csv_bills --scrape --fastmode 2>&1 | tee -a "$SCRAPE_LOG"
     then
       exit_code=0
@@ -82,7 +82,7 @@ for i in 1 2 3; do
       -v "$(pwd)/_working/_data":/opt/openstates/openstates/_data \
       -v "$(pwd)/_working/_cache":/opt/openstates/openstates/_cache \
       "${DOCKER_ENV_FLAGS[@]+"${DOCKER_ENV_FLAGS[@]}"}" \
-      openstates/scrapers:${DOCKER_IMAGE_TAG} \
+      ${DOCKER_IMAGE} \
       ${STATE} bills --scrape --fastmode 2>&1 | tee -a "$SCRAPE_LOG"
   then
     exit_code=0
@@ -186,11 +186,58 @@ else
   ERROR_COUNT=$(echo "$OTHER_ERRORS" | wc -l | tr -d ' ')
 fi
 
+# Classify failure type (see scrape-failure-types.md for full reference)
+# Grep the log file directly — avoids broken-pipe errors from piping large variables through echo.
+IS_ACTIVE_BLOCK="false"
+
+if [ "$exit_code" -eq 0 ]; then
+  FAILURE_TYPE="NONE"
+elif grep -qE "ConnectionRefusedError|Errno 111" "$SCRAPE_LOG" 2>/dev/null; then
+  FAILURE_TYPE="N1_ACTIVE_BLOCK"
+  IS_ACTIVE_BLOCK="true"
+elif grep -qE "ConnectionResetError" "$SCRAPE_LOG" 2>/dev/null; then
+  FAILURE_TYPE="N3_ACTIVE_BLOCK"
+  IS_ACTIVE_BLOCK="true"
+elif grep -qE "403.*(Forbidden|forbidden)|Forbidden.*403" "$SCRAPE_LOG" 2>/dev/null; then
+  FAILURE_TYPE="H1_ACTIVE_BLOCK"
+  IS_ACTIVE_BLOCK="true"
+elif grep -qE "Name or service not known|nodename nor servname provided|EAI_NONAME" "$SCRAPE_LOG" 2>/dev/null; then
+  FAILURE_TYPE="N4_DNS_FAILURE"
+  IS_ACTIVE_BLOCK="true"
+elif grep -qE "429|Too Many Requests" "$SCRAPE_LOG" 2>/dev/null; then
+  FAILURE_TYPE="H3_RATE_LIMITED"
+elif grep -qE "TimeoutError|ConnectTimeoutError|timed out|Errno 110|RemoteDisconnected|Connection aborted" "$SCRAPE_LOG" 2>/dev/null; then
+  FAILURE_TYPE="N2_CONNECTIVITY"
+elif grep -qE "503|Service Unavailable" "$SCRAPE_LOG" 2>/dev/null; then
+  FAILURE_TYPE="H4_SERVER_DOWN"
+elif grep -qE "ScrapeValueError|validation.*failed|failed.*validation" "$SCRAPE_LOG" 2>/dev/null; then
+  # Check before H2 — ScrapeValueError is a specific openstates schema failure, not an auth issue.
+  # Logs can contain "401" or "Unauthorized" incidentally (e.g. DC uses Authorization header)
+  # and would otherwise be misclassified as H2_AUTH_FAILURE.
+  FAILURE_TYPE="S6_VALIDATION"
+elif grep -qE "401|Unauthorized" "$SCRAPE_LOG" 2>/dev/null; then
+  FAILURE_TYPE="H2_AUTH_FAILURE"
+elif grep -qE "ScrapeError.*no objects returned|no objects returned" "$SCRAPE_LOG" 2>/dev/null; then
+  FAILURE_TYPE="S1_OUT_OF_SESSION"
+elif grep -qE "contains no matching files" "$SCRAPE_LOG" 2>/dev/null; then
+  FAILURE_TYPE="S2_OUT_OF_SESSION"
+elif grep -qE "AssertionError.*[Ss]ession" "$SCRAPE_LOG" 2>/dev/null; then
+  FAILURE_TYPE="S3_SESSION_CONFIG"
+elif grep -qE "KeyError" "$SCRAPE_LOG" 2>/dev/null; then
+  FAILURE_TYPE="S4_SITE_STRUCTURE"
+elif grep -qE "ValueError|IndexError" "$SCRAPE_LOG" 2>/dev/null; then
+  FAILURE_TYPE="S5_SITE_STRUCTURE"
+else
+  FAILURE_TYPE="UNKNOWN"
+fi
+
 # Write summary JSON
 cat > "$SUMMARY_FILE" <<EOF
 {
   "state": "${STATE}",
   "exit_code": ${exit_code},
+  "failure_type": "${FAILURE_TYPE}",
+  "is_active_block": ${IS_ACTIVE_BLOCK},
   "objects": {
     "bill": ${BILL_COUNT:-0},
     "vote_event": ${VOTE_EVENT_COUNT:-0},

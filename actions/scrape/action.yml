@@ -29,6 +29,10 @@ inputs:
     description: "JSON object with API keys for states that require them (e.g., DC_API_KEY, NEW_YORK_API_KEY, INDIANA_API_KEY, USER_AGENT). Note: Virginia uses csv_bills scraper and requires no API key."
     required: false
     default: "{}"
+  docker-image:
+    description: "Full Docker image reference to use for scraping (e.g., ghcr.io/govbot-openstates-scrapers/openstates-scrapers:tx-89r-backfill). Defaults to openstates/scrapers:latest."
+    required: false
+    default: "openstates/scrapers:latest"
 
 outputs:
   scrape-artifact-name:
@@ -72,11 +76,14 @@ runs:
       shell: bash
       working-directory: ${{ runner.temp }}
       env:
-        DOCKER_IMAGE_TAG: latest
+        DOCKER_IMAGE: ${{ inputs.docker-image }}
         API_KEYS_JSON: ${{ inputs.api-keys }}
       run: |
         set -euo pipefail
-        # Persist image tag for later steps (manifest)
+        # Persist image for later steps (manifest)
+        echo "DOCKER_IMAGE=${DOCKER_IMAGE}" >> "${GITHUB_ENV}"
+        # Extract tag portion for manifest (last part after colon, or 'latest')
+        DOCKER_IMAGE_TAG="${DOCKER_IMAGE##*:}"
         echo "DOCKER_IMAGE_TAG=${DOCKER_IMAGE_TAG}" >> "${GITHUB_ENV}"
 
         # Use CA-specific script for California (MySQL-based)
@@ -84,7 +91,7 @@ runs:
           echo "🏛️ Using California-specific MySQL scraper..."
           bash "${{ github.action_path }}/scrape-ca.sh" "$(pwd)" "${{ github.workspace }}" "${DOCKER_IMAGE_TAG}" || true
         else
-          bash "${{ github.action_path }}/scrape.sh" "${{ inputs.state }}" "${DOCKER_IMAGE_TAG}" "$(pwd)" "${{ github.workspace }}" "${API_KEYS_JSON}" || true
+          bash "${{ github.action_path }}/scrape.sh" "${{ inputs.state }}" "${DOCKER_IMAGE}" "$(pwd)" "${{ github.workspace }}" "${API_KEYS_JSON}" || true
         fi
 
         # Check if tarball was created
@@ -229,6 +236,8 @@ runs:
           DURATION=$(jq -r '.duration // "unknown"' "$SUMMARY_FILE")
           ERROR_COUNT=$(jq -r '.error_count // 0' "$SUMMARY_FILE")
           ERRORS=$(jq -r '.errors | if length > 0 then .[] else empty end' "$SUMMARY_FILE" 2>/dev/null || echo "")
+          FAILURE_TYPE=$(jq -r '.failure_type // "NONE"' "$SUMMARY_FILE")
+          IS_ACTIVE_BLOCK=$(jq -r '.is_active_block // false' "$SUMMARY_FILE")
         else
           BILL_COUNT="N/A"
           VOTE_EVENT_COUNT="N/A"
@@ -238,6 +247,8 @@ runs:
           DURATION="N/A"
           ERROR_COUNT=0
           ERRORS=""
+          FAILURE_TYPE="NONE"
+          IS_ACTIVE_BLOCK="false"
         fi
 
         # Calculate metadata total
@@ -263,6 +274,13 @@ runs:
         echo "| ⏱️ Duration | $DURATION |" >> $GITHUB_STEP_SUMMARY
         echo "| 📦 Source | $SOURCE |" >> $GITHUB_STEP_SUMMARY
         echo "| Status | $STATUS |" >> $GITHUB_STEP_SUMMARY
+        if [ "${FAILURE_TYPE:-NONE}" != "NONE" ]; then
+          if [ "${IS_ACTIVE_BLOCK:-false}" = "true" ]; then
+            echo "| 🚨 Failure Type | \`$FAILURE_TYPE\` — **ACTIVE BLOCK** |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| ⚠️ Failure Type | \`$FAILURE_TYPE\` |" >> $GITHUB_STEP_SUMMARY
+          fi
+        fi
 
         # Show errors if any (only if scrape actually failed, or if there are critical errors)
         EXIT_CODE=$(jq -r '.exit_code // 0' "$SUMMARY_FILE" 2>/dev/null || echo "0")
@@ -292,20 +310,57 @@ runs:
         set -euo pipefail
 
         SUMMARY_FILE="${GITHUB_WORKSPACE}/scrape-summary.json"
+        TARBALL="${GITHUB_WORKSPACE}/scrape-snapshot-nightly.tgz"
 
-        # Check if scrape failed by reading exit code from summary
-        if [ -f "$SUMMARY_FILE" ]; then
-          EXIT_CODE=$(jq -r '.exit_code // 0' "$SUMMARY_FILE")
-
-          if [ "$EXIT_CODE" != "0" ]; then
-            echo "❌ Scrape failed with exit code $EXIT_CODE"
-            echo "::error::Scrape failed for ${{ inputs.state }}. Check the summary above for details."
-            exit 1
-          else
-            echo "✅ Scrape succeeded"
-          fi
-        else
+        if [ ! -f "$SUMMARY_FILE" ]; then
           echo "⚠️ No summary file found, assuming success"
+          exit 0
+        fi
+
+        EXIT_CODE=$(jq -r '.exit_code // 0' "$SUMMARY_FILE")
+        FAILURE_TYPE=$(jq -r '.failure_type // "UNKNOWN"' "$SUMMARY_FILE")
+        IS_ACTIVE_BLOCK=$(jq -r '.is_active_block // false' "$SUMMARY_FILE")
+
+        if [ "$EXIT_CODE" = "0" ]; then
+          echo "✅ Scrape succeeded (failure_type: $FAILURE_TYPE)"
+          exit 0
+        fi
+
+        # Active blocks (N1, N3, N4, H1): alert loudly regardless of fallback.
+        # A state blocking our scraper should never pass silently — stale data
+        # accumulates unnoticed and the blocking goes unreported.
+        if [ "$IS_ACTIVE_BLOCK" = "true" ]; then
+          TARBALL_AGE=""
+          if [ -f "$TARBALL" ]; then
+            TARBALL_MTIME=$(stat -c %Y "$TARBALL" 2>/dev/null || stat -f %m "$TARBALL" 2>/dev/null || echo "0")
+            NOW=$(date +%s)
+            DAYS_OLD=$(( (NOW - TARBALL_MTIME) / 86400 ))
+            TARBALL_AGE=" Fallback data is ${DAYS_OLD} day(s) old."
+          fi
+          echo "🚨 ACTIVE BLOCK DETECTED ($FAILURE_TYPE) for ${{ inputs.state }}.$TARBALL_AGE"
+          echo "::error::${{ inputs.state }} scraper is being actively blocked ($FAILURE_TYPE). Data may be stale.$TARBALL_AGE"
+          # Do not exit 1 if we have fallback data — formatter can still run.
+          # But the ::error:: annotation marks the action red so it is visible.
+          if [ ! -f "$TARBALL" ]; then
+            exit 1
+          fi
+          exit 0
+        fi
+
+        # Out of session (S1, S2): benign, no alert needed.
+        if [[ "$FAILURE_TYPE" == S1_* ]] || [[ "$FAILURE_TYPE" == S2_* ]]; then
+          echo "ℹ️ Legislature out of session ($FAILURE_TYPE) — using fallback data"
+          exit 0
+        fi
+
+        # All other failures: warn and use fallback if available, hard-fail if not.
+        if [ -f "$TARBALL" ]; then
+          echo "⚠️ Scrape failed ($FAILURE_TYPE) but fallback data is available — continuing"
+          echo "::warning::${{ inputs.state }} scrape failed ($FAILURE_TYPE). Running on fallback data."
+        else
+          echo "❌ Scrape failed ($FAILURE_TYPE) and no fallback data available"
+          echo "::error::Scrape failed for ${{ inputs.state }} ($FAILURE_TYPE). No fallback data available."
+          exit 1
         fi
 
     - name: Extract files to workspace
@@ -354,6 +409,7 @@ runs:
         # Configure git
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
+        git config --local http.postBuffer 524288000
 
         # Add scraped files
         git add "_data/${{ inputs.state }}/"
