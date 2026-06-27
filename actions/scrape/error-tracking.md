@@ -4,7 +4,7 @@ Track the status of the scrape action across all 57 jurisdictions.
 
 **Statuses:** `✅ OK` | `❌ Broken` | `⚠️ Intermittent` | `⏸️ Unknown`
 
-Last updated: 2026-06-26
+Last updated: 2026-06-27
 
 ## Summary of Failures
 
@@ -56,6 +56,26 @@ Scraper runs and fetches data, but bill records fail internal validation.
 
 ---
 
+## Open TODOs
+
+### Node.js 20 Deprecation — Action Version Bumps
+All action runs show deprecation warnings. Not breaking yet — GitHub is forcing Node 24 as a shim — but will fail when the shim is removed.
+
+Required bumps (confirmed by checking `runs.using` in each action's `action.yml`):
+
+| Action | Current | Target |
+|--------|---------|--------|
+| `actions/checkout` | `@v4` (node20) | `@v7` (node24) |
+| `actions/setup-python` | `@v5` (node20) | `@v6` (node24) |
+| `actions/cache` | `@v4` (node20) | `@v6` (node24) |
+| `actions/upload-artifact` | `@v4` (node20) | `@v7` (node24) |
+| `softprops/action-gh-release` | `@v2` (node20) | `@v3` (node24) |
+| `andelf/nightly-release` | `@v1` (node16) | ❌ no newer release — needs replacement |
+
+Files to update: `actions/scrape/action.yml`, `actions/format/action.yml`, `actions/extract/action.yml`, `actions/govbot/action.yml`, `actions/pipeline-manager/templates/` (then re-run `apply.py --all-states`).
+
+---
+
 ## Full Status Table
 
 | Jurisdiction | Code | Status | Error | Notes |
@@ -63,11 +83,11 @@ Scraper runs and fetches data, but bill records fail internal validation.
 | Alaska | ak | ✅ OK | | |
 | Alabama | al | ✅ OK | | |
 | Arkansas | ar | ✅ OK | | |
-| Arizona | az | ❌ Broken | `AssertionError: Session ID not in bill list` | Category B — OpenStates scraper bug; session ID config mismatch |
+| Arizona | az | ❌ Broken | `S3_SESSION_CONFIG` | Category B — Session ended 2026-04-17; scraper asserting on stale session ID. Will need re-check when 2027 session opens. |
 | California | ca | ✅ OK | | |
 | Colorado | co | ✅ OK | | |
 | Connecticut | ct | ❌ Broken | `ScrapeError: no objects returned from CTBillScraper scrape` | Category A — Legislature likely out of session |
-| District of Columbia | dc | ❌ Broken | `ScrapeValueError: validation of Bill failed: None is not of type 'string'` | Category C — Non-PDF attachments in `leg_details["actions"]` set `mimetype=None`, failing OCD schema validation on `media_type`. Scraper crashes mid-run; bills after the failing record are dropped. DC_API_KEY is working fine. PR submitted to openstates/openstates-scrapers: fix/dc-media-type-null. |
+| District of Columbia | dc | ❌ Broken | `S6_VALIDATION` (or `H3_RATE_LIMITED` intermittently) | Category C — Non-PDF attachments in `leg_details["actions"]` set `mimetype=None`, failing OCD schema validation on `media_type`. Scraper crashes mid-run; bills after the failing record are dropped. DC_API_KEY is working fine. PR submitted to openstates/openstates-scrapers: fix/dc-media-type-null. 2026-06-27 run showed H3_RATE_LIMITED — may have gotten further before dying; validation error is the root cause. |
 | Delaware | de | ✅ OK | | |
 | Florida | fl | ✅ OK | | |
 | Georgia | ga | ✅ OK | | |
@@ -92,7 +112,7 @@ Scraper runs and fetches data, but bill records fail internal validation.
 | North Carolina | nc | ✅ OK | | |
 | North Dakota | nd | ✅ OK | | |
 | Nebraska | ne | ✅ OK | | |
-| New Hampshire | nh | ❌ Broken | `ConnectTimeoutError: Connection to gc.nh.gov timed out` | Category D — Government site timing out consistently |
+| New Hampshire | nh | ❌ Broken | `H3_RATE_LIMITED` (was `ConnectTimeoutError`) | Category D — Session ended 2026-03-14; site returning rate limit errors. Timeout observed previously; may rotate between the two. |
 | New Jersey | nj | ❌ Broken | `KeyError: 'A4029'` | Category B — Bill lookup dict missing expected key; site format changed |
 | New Mexico | nm | ❌ Broken | `ValueError: ftp://www.nmlegis.gov/other/ contains no matching files` | Category A — NM FTP has no files; likely out of session |
 | Nevada | nv | ✅ OK | | |
@@ -105,8 +125,8 @@ Scraper runs and fetches data, but bill records fail internal validation.
 | Rhode Island | ri | ✅ OK | | |
 | South Carolina | sc | ✅ OK | | |
 | South Dakota | sd | ✅ OK | | |
-| Tennessee | tn | ❌ Broken | `IndexError: list index out of range` | Category B — TN site structure changed; list parsing broke |
-| Texas | tx | ❌ Broken | `ConnectionError: capitol.texas.gov connection refused` | Category A — TX has biennial legislature; likely out of session |
+| Tennessee | tn | ❌ Broken | `H4_SERVER_DOWN` (was `IndexError`) | Category B — Session ended 2026-04-15; server returning 503. IndexError (site structure bug) is the real issue to fix when 2027 session opens. |
+| Texas | tx | ❌ Broken | `ConnectionError: capitol.texas.gov connection refused` | Category F — Active IP block; TX rotates between connection refused (N1) and 503 (H4) depending on the run |
 | USA | usa | ✅ OK | | |
 | Utah | ut | ✅ OK | | |
 | Virginia | va | ❌ Broken | Workflows disabled | Category E — No runs since 2026-04-01; scheduled runs appear disabled. Requires `USER_AGENT` secret (confirmed present). Uses `csv_bills` scraper, not standard bills scraper. |
