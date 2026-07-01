@@ -55,7 +55,7 @@ runs:
     
     - name: Restore repos cache
       id: cache-repos
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ${{ steps.set-govbot-dir.outputs.repos-dir }}
         key: govbot-repos-${{ runner.os }}-${{ hashFiles('govbot.yml') }}
@@ -100,7 +100,7 @@ runs:
     
     - name: Save repos cache
       if: steps.cache-repos.outputs.cache-hit != 'true'
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ${{ steps.set-govbot-dir.outputs.repos-dir }}
         key: govbot-repos-${{ runner.os }}-${{ hashFiles('govbot.yml') }}

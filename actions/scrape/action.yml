@@ -49,7 +49,7 @@ runs:
   using: "composite"
   steps:
     - name: Setup Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v6
       with:
         python-version: "3.9"
 
@@ -63,7 +63,7 @@ runs:
 
     - name: Cache scrapes (best-effort)
       if: inputs.use-scrape-cache != 'true'
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ${{ runner.temp }}/_working/_cache
         key: cache-scrapes-${{ inputs.state }}-${{ github.sha }}
@@ -103,7 +103,7 @@ runs:
 
     - name: Upload scraped artifact (rolling)
       if: inputs.use-scrape-cache != 'true' && env.SCRAPE_TARBALL == 'present'
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: scrape-snapshot-nightly
         path: ${{ github.workspace }}/scrape-snapshot-nightly.tgz
@@ -112,15 +112,15 @@ runs:
 
     - name: Update nightly release (rolling)
       if: inputs.use-scrape-cache != 'true' && env.SCRAPE_TARBALL == 'present'
-      uses: andelf/nightly-release@v1
+      shell: bash
       env:
-        GITHUB_TOKEN: ${{ inputs.github-token }}
-      with:
-        tag_name: nightly
-        name: "Nightly OpenStates scrape"
-        prerelease: false
-        files: |
-          ${{ github.workspace }}/scrape-snapshot-nightly.tgz
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        gh release delete nightly --yes --repo "${{ github.repository }}" 2>/dev/null || true
+        gh release create nightly \
+          --repo "${{ github.repository }}" \
+          --title "Nightly OpenStates scrape" \
+          "${{ github.workspace }}/scrape-snapshot-nightly.tgz"
 
     - name: Build archive manifest (immutable)
       if: env.SCRAPE_TARBALL == 'present'
@@ -167,7 +167,7 @@ runs:
 
     - name: Publish immutable archive (date-stamped release)
       if: env.SCRAPE_TARBALL == 'present'
-      uses: softprops/action-gh-release@v2
+      uses: softprops/action-gh-release@v3
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
       with:
