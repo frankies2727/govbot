@@ -182,7 +182,7 @@ locales:
     name: New York
     toolkit_branch: main
   nc:
-    template: openstates-scrape
+    template: openstates-scrape-paused
     name: North Carolina
     toolkit_branch: main
     labels:
