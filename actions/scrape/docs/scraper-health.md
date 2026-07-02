@@ -4,161 +4,176 @@ Tracks the status of all 56 `govbot-openstates-scrapers` repos. Updated manually
 
 ---
 
-### Fix Pending
-
-| State | Status             | Issue                                 | Notes                                                                                                                                                                                                                                                                                                                                                                               |
-| ----- | ------------------ | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| va    | 🔧 fix in progress | Scrape argument bug                   | Session ended Mar 14. Root cause found: `--session` flag was before scraper name in `scrape.sh`, and `csv_bills` had hardcoded session ID. govbot PR [#52](https://github.com/chihacknight/govbot/pull/52) fixes `scrape.sh`; OpenStates PR [#5717](https://github.com/openstates/openstates-scrapers/pull/5717) fixes `csv_bills`. After both merge, run apply-templates for `va`. |
-| vi    | ❌ server down     | `billtracking.legvi.org:8082` offline | VI is in active session but the site is returning connection timeouts. No code fix possible — waiting for the site to come back online.                                                                                                                                                                                                                                             |
+## 2026-07-02 Status Update
 
 ### Self-Hosted Runner States
 
-| State | Status                     | Notes                                                                                                                                                                                                                               |
-| ----- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| tx    | ⏸️ out of session          | `capitol.texas.gov` blocks Azure IPs — requires self-hosted runner. Runner now registered at org level. Will resume when next session starts.                                                                                       |
-| ma    | 🔄 running on self-hosted  | `malegislature.gov` throttles Azure IPs. Running on MacBook runner daily. PR [#53](https://github.com/chihacknight/govbot/pull/53) pending merge.                                                                                   |
-| fl    | 🔧 one-time scrape pending | Session ended. Needs one final scrape from self-hosted runner to capture end-of-session data, then move back to paused.                                                                                                             |
-| tn    | 🔧 backfill needed         | `wapp.capitol.tn.gov` blocks Azure IPs (N1_ACTIVE_BLOCK). 114th GA (2025-2026) ended ~2026-04-25 — only 37 of ~5,400+ bills scraped before block hit. Needs one self-hosted runner scrape. Next session: 115th GA, ~January 2027. |
+3 runners now active on MacBook (`~/actions-runner/`, `~/actions-runner-2/`, `~/actions-runner-3/`) registered at org level (`govbot-openstates-scrapers`).
 
-### Cancelled (Timeout) — Now Resolved
+| State | Status | Notes |
+|-------|--------|-------|
+| tx | ⏸️ out of session | `capitol.texas.gov` blocks Azure IPs. Runner ready. Resumes ~Jan 2027. |
+| ma | ✅ running daily | First self-hosted run completed 2026-07-02 in 7h 43m. PR [#53](https://github.com/chihacknight/govbot/pull/53) ✅ merged. Running daily going forward. |
+| fl | 🔄 backfill running | End-of-session capture in progress on self-hosted runner. PRs [#53](https://github.com/chihacknight/govbot/pull/53) + [#55](https://github.com/chihacknight/govbot/pull/55) ✅ merged. |
+| tn | 🔄 backfill running | 114th GA ended ~2026-04-25. Only 37/5,400+ bills captured (IP block). Self-hosted runner added via PR [#56](https://github.com/chihacknight/govbot/pull/56) ✅ merged. Apply-templates done. Full backfill running now. |
 
-| State | Previous Status             | Resolution                              |
-| ----- | --------------------------- | --------------------------------------- |
-| fl    | ⏸️ cancelled after 4+ hours | Moved to self-hosted runner (see above) |
-| ma    | ⏸️ cancelled after 4+ hours | Moved to self-hosted runner (see above) |
+### Fix Pending
 
-### On Fallback (Scraper Error, Serving Stale Data)
+| State | Status | Notes |
+|-------|--------|-------|
+| va | 🔧 waiting on OpenStates | `scrape.sh` arg order fixed + session bumped to 2026 via PR [#54](https://github.com/chihacknight/govbot/pull/54) ✅ merged + apply-templates done. Waiting on OpenStates PR [#5717](https://github.com/openstates/openstates-scrapers/pull/5717) to merge before running. |
+| wv | 🔧 waiting on OpenStates | XPath broken after site redesign — 0 bills scraped. PR [#5719](https://github.com/openstates/openstates-scrapers/pull/5719) 🔄 open. Backfill after merge. |
+| vi | ❌ server down | `billtracking.legvi.org:8082` offline. Active session but no code fix possible. |
 
-| State | Failure Type      | Error                                                                                                                                                                                                                                     | Action                                                                                                                                        |
-| ----- | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| la    | S5_SITE_STRUCTURE | Crash fixed via PR [#5716](https://github.com/openstates/openstates-scrapers/pull/5716) (merged 2026-07-01). Ran manually after merge — only 7 of 525 bills scraped. Root cause: `r={}1*` search pattern + abbreviation discovery issues. | Issue [#1379](https://github.com/openstates/issues/issues/1379) filed — waiting on OpenStates maintainers                                     |
-| ok    | S3_SESSION_CONFIG | `CommandError: Session(s) "1998 Regular Session (PROD)" not found` — `(PROD)` suffix not stripped from session list                                                                                                                       | PR [#5718](https://github.com/openstates/openstates-scrapers/pull/5718) merged 2026-07-01 — fix will take effect on next Docker image release |
+### Backfill Needed (Docker Timing / Stale Cache)
 
-### Clean (50/56)
+These states have accessible APIs but were scraped with partial data due to Docker image timing or stale GitHub Actions cache.
 
-All other states ran successfully. Notable counts:
+| State | Files | Notes |
+|-------|------:|-------|
+| sd | 41 | Cache cleared 2026-07-02. Fresh backfill dispatch running now — expect 666 bills. |
+| ut | 28 | 3/1,016 2026 bills (stale cache) + 5 complete 2025S2 bills. Needs cache clear + dispatch. |
+| in | 47 | ~40/1,000+ bills. Docker got 2026 session Mar 23; session ended Feb 27. Needs dispatch. |
+| id | 5 | 1 bill only. Docker got 2026 session late; session ended Apr 2. Needs dispatch. |
 
-| State | Files  | Notes                                       |
-| ----- | ------ | ------------------------------------------- |
-| ny    | 24,937 |                                             |
-| ca    | 22,680 |                                             |
-| il    | 15,323 |                                             |
-| mt    | 13,258 |                                             |
-| usa   | 11,960 |                                             |
-| mn    | 9,815  |                                             |
-| nj    | 8,212  |                                             |
-| pa    | 6,423  |                                             |
-| wa    | 5,713  |                                             |
-| pr    | 5,081  |                                             |
-| de    | 3,065  |                                             |
-| ms    | 3,033  |                                             |
-| mi    | 2,913  |                                             |
-| nc    | 2,432  |                                             |
-| oh    | 2,167  |                                             |
-| nd    | 3,265  |                                             |
-| ne    | 1,976  |                                             |
-| al    | 1,511  |                                             |
-| ks    | 1,487  |                                             |
-| sc    | 3,947  |                                             |
-| ri    | 4,132  |                                             |
-| ia    | 3,748  |                                             |
-| me    | 3,613  |                                             |
-| mo    | 4,640  |                                             |
-| dc    | 2,713  | DC fix (PRs #5706, #5711) confirmed working |
-| gu    | 833    |                                             |
-| vt    | 953    |                                             |
-| ak    | 942    |                                             |
-| co    | 736    |                                             |
-| or    | 268    |                                             |
-| ga    | 460    |                                             |
-| md    | 535    |                                             |
-| wi    | 2,701  |                                             |
-| wv    | 45     |                                             |
-| wy    | 27     |                                             |
-| sd    | 45     |                                             |
-| ky    | 78     |                                             |
-| nv    | 64     |                                             |
-| ut    | 28     |                                             |
-| mp    | 139    |                                             |
-| in    | 47     |                                             |
-| nh    | 437    |                                             |
-| ar    | 4      | Active special session `2026S1` (May 4–Aug 15). FTP source has 2 bills (SB1, HB1001) but scraper produces 0 with EXIT_CODE=0. Root cause unclear — likely stale scrapelib cache or silent pupa validation failure. Needs Docker-level investigation. |
-| az    | 4      | Out of session — ended Apr 17               |
-| ct    | 4      | Out of session                              |
-| hi    | 4      | Out of session — ended May 8                |
-| id    | 5      | Out of session                              |
-| nm    | 4      | No 2026 session                             |
-| tn    | 37     | Out of session — ended Apr 15               |
+### Needs Verification Run
+
+| State | Notes |
+|-------|-------|
+| ok | PR [#5718](https://github.com/openstates/openstates-scrapers/pull/5718) ✅ merged 2026-07-01 — (PROD) suffix fix. Trigger manual dispatch to confirm bills scraped. |
+
+### WAF / Site Blocking (OpenStates Fix Needed)
+
+| State | Files | Issue | Notes |
+|-------|------:|-------|-------|
+| az | 4 | [#1382](https://github.com/openstates/issues/issues/1382) 🔄 | Sucuri WAF blocks `setsession.php` POST. Full 2026 session missed. |
+| hi | 4 | [#1383](https://github.com/openstates/issues/issues/1383) 🔄 | Cloudflare WAF blocks all bill pages. Full 2026 session missed. |
+
+### FTP Data Sources (OpenStates Fix Needed)
+
+| State | Files | Issue | Notes |
+|-------|------:|-------|-------|
+| nm | 4 | [#1381](https://github.com/openstates/issues/issues/1381) 🔄 | FTP-only data; scrapelib can't handle `ftp://`. |
+| ct | 4 | [#1384](https://github.com/openstates/issues/issues/1384) 🔄 | 5 FTP endpoints; scrapelib can't handle `ftp://`. More complex fix. |
+
+### Active Session / Scraper Mystery
+
+| State | Files | Notes |
+|-------|------:|-------|
+| ar | 4 | Active session `2026S1` (May 4–Aug 15). FTP source has 2 bills (SB1, HB1001) but scraper produces 0 with EXIT_CODE=0. Root cause unclear — likely stale scrapelib cache. Needs Docker-level investigation. |
+| la | 7 | Crash fixed PR [#5716](https://github.com/openstates/openstates-scrapers/pull/5716) ✅. Only 7/525 bills returned — bill search pattern issues. Issue [#1379](https://github.com/openstates/issues/issues/1379) 🔄 open, waiting on maintainers. |
+
+### Clean / Expected Low
+
+All other states running successfully. States with low counts are expected (short sessions, budget-only, or no 2026 session).
+
+| State | Files | Notes |
+|-------|------:|-------|
+| ny | 24,937 | |
+| ca | 22,680 | |
+| il | 15,323 | |
+| mt | 13,258 | |
+| usa | 11,960 | |
+| mn | 9,815 | |
+| nj | 8,212 | |
+| pa | 6,423 | |
+| wa | 5,713 | |
+| pr | 5,081 | |
+| sc | 3,947 | |
+| ri | 4,132 | |
+| mo | 4,640 | |
+| ia | 3,748 | |
+| me | 3,613 | |
+| nd | 3,265 | |
+| ms | 3,033 | |
+| mi | 2,913 | |
+| dc | 2,713 | PRs #5706, #5711 confirmed working |
+| wi | 2,701 | |
+| nc | 2,432 | |
+| oh | 2,167 | |
+| ne | 1,976 | |
+| al | 1,511 | |
+| ks | 1,487 | |
+| ak | 942 | |
+| vt | 953 | |
+| gu | 833 | |
+| co | 736 | |
+| ga | 460 | |
+| md | 535 | |
+| nh | 437 | |
+| or | 268 | |
+| mp | 139 | |
+| ky | 78 | 30-day even-year session |
+| nv | 64 | No 2026 session (2025S data) |
+| wy | 27 | Budget session only |
 
 ---
 
 ## Known Ongoing Issues
 
-### FL — Serial Per-Bill Scraping (Out of Session)
+### TN — IP Block by wapp.capitol.tn.gov
 
-FL session ended; one final scrape needed to capture end-of-session data.
+TN's 114th General Assembly (2025-2026) ended ~2026-04-25. The scraper was blocked by `wapp.capitol.tn.gov` early in the run — only 37 of an estimated ~5,400+ bills were captured before the block hit. Site is accessible from non-cloud IPs; block is specific to GitHub-hosted runner IPs (N1_ACTIVE_BLOCK), same pattern as TX.
 
-Root cause of 6-hour cancellations: the FL scraper fetches each bill individually — BillDetail page, HouseSearchPage, HouseBillPage, then N vote PDFs in a pagination loop ("Votes don't add up; looking for additional ones"). Just one bill (HJR 1F) took ~34 seconds and required 7 separate vote PDF fetches. Across hundreds of bills in two sessions (`2026` and `2026F`), this exhausts the 6-hour GitHub Actions cap. No evidence of IP blocking — `flsenate.gov` and `flhouse.gov` serve Azure IPs without issue, it's just a slow serial design.
+**Bill count estimate**: Index at `wapp.capitol.tn.gov/apps/indexes/BillsByIndex/?year=114` shows 98 listing pages — HB0001–HB2671, SB0001–SB2733, plus HJR, SJR, HR, SR series. Roughly 5,400+ total.
 
-**Fix in progress**: `fl-legislation` workflow updated to `runs-on: self-hosted`. Once MA finishes and PR [#53](https://github.com/chihacknight/govbot/pull/53) is merged, trigger FL manually. After data is captured, move FL back to `openstates-scrape-paused` template via pipeline-manager config + apply-templates.
+**Fix applied 2026-07-02**: `runner: self-hosted` added to TN (PR [#56](https://github.com/chihacknight/govbot/pull/56)), apply-templates run, full backfill dispatch triggered. Next session: 115th GA ~January 2027.
 
 ### MA — Active Throttling by malegislature.gov
 
-MA is actively throttling Azure-originating requests. Response times ramp up progressively within a single run: 36s → 72s → 300s → server errors → connection drop. Run history confirms this: some days complete in 1-2 hours (light throttling), other days cancel after 6 hours (heavy throttling). Two `Server Error` responses visible mid-run on HD3106 and HD3112. The scraper eventually fails and retries from scratch, burning more time.
+`malegislature.gov` throttles Azure-originating requests progressively: 36s → 72s → 300s → connection drop. Fixed by moving to self-hosted runner. First successful run 2026-07-02 completed in 7h 43m. Now runs daily on MacBook runner.
 
-This is the same underlying pattern as TX (hostile to scraping from cloud IPs), just throttling instead of a hard block. A self-hosted runner on a home network IP bypasses the Azure IP detection.
+### FL — Serial Per-Bill Scraping
 
-**Fix in progress**: `ma-legislation` workflow updated to `runs-on: self-hosted` (via PR [#53](https://github.com/chihacknight/govbot/pull/53)). First run on self-hosted runner in progress as of 2026-07-01. After PR merges, MA will stay on self-hosted for all future daily scrapes.
+FL scraper fetches each bill individually (BillDetail + HouseSearchPage + N vote PDFs). One bill (HJR 1F) took ~34s with 7 vote PDF fetches. Across two sessions (`2026` + `2026F`), this exceeds the 6-hour GitHub Actions cap. No IP blocking — it's just slow. Fixed by moving to self-hosted runner (no time cap). End-of-session backfill running 2026-07-02.
 
-### VA — Scrape Argument Bug (Fix Pending)
+### VA — Scrape Argument Bug (Waiting on OpenStates)
 
-VA session ended Mar 14, 2026. Workflows were disabled since 2026-04-01. Root cause traced to `scrape.sh`: `--session=2025` was placed before the scraper name (`csv_bills`), which OpenStates rejects. Fix (correct arg order + bumped to `--session=2026`) is on `fix/va-vi-scrapers` branch in govbot — **needs PR, merge, and apply-templates run** to push updated `scrape.sh` to va-legislation repo. VA csv_bills also had a hardcoded `session_id = "20251"` ignoring the `--session` argument — fixed in OpenStates PR [#5717](https://github.com/openstates/openstates-scrapers/pull/5717) (open). Issue [#1377](https://github.com/openstates/issues/issues/1377) filed.
-
-### VI — Server Down
-
-VI is in active session but `billtracking.legvi.org:8082` is returning connection timeouts. This is a server-side outage — no code fix possible until the site comes back online.
-
-### TN — IP Block by wapp.capitol.tn.gov (Backfill Needed)
-
-TN's 114th General Assembly (2025-2026) ended ~2026-04-25. The scraper was blocked by `wapp.capitol.tn.gov` early in the run — only 37 of an estimated ~5,400+ bills were captured before the block hit.
-
-The site itself is accessible from non-cloud IPs (confirmed via manual fetch). The block is specific to GitHub-hosted runner IPs (N1_ACTIVE_BLOCK), same pattern as TX.
-
-**Bill count estimate**: The index page at `wapp.capitol.tn.gov/apps/indexes/BillsByIndex/?year=114` shows 98 listing pages — HB0001–HB2671, SB0001–SB2733, plus HJR, SJR, HR, SR series. Roughly 5,400+ total.
-
-**Scraper mechanism** (`scrapers/tn/bills.py`): fetches the index page → follows 98 paginated listing links → fetches each individual bill page. Gets blocked partway through the listing pages, producing a partial result.
-
-**Fix**: add `runner: self-hosted` to TN in `chn-openstates-scrape.yml`, run apply-templates, then trigger one manual dispatch on `tn-legislation` to do the full backfill. After successful run, TN stays on self-hosted for future sessions.
-
-**Next session**: 115th General Assembly, expected ~January 2027 (TN sessions start in odd years).
+`scrape.sh` arg order fixed and session bumped to 2026 (PR [#54](https://github.com/chihacknight/govbot/pull/54) ✅). Apply-templates run. Waiting on OpenStates PR [#5717](https://github.com/openstates/openstates-scrapers/pull/5717) to fix hardcoded `session_id="20251"` in `csv_bills`. Will trigger scrape once #5717 merges.
 
 ### TX — Self-Hosted Runner Dependency (Out of Session)
 
-TX is currently out of session (paused). When it returns, scrapes require Tamara's MacBook (`~/actions-runner/`) to be online. `capitol.texas.gov` actively blocks Azure IP ranges used by GitHub-hosted runners. Runner is now registered at the **org level** (`govbot-openstates-scrapers`) so it covers MA, FL, and TX. Runbook: `actions/scrape/docs/tx-backfill-runbook.md`.
+TX out of session (no 2026 regular session). Requires MacBook runner when active — `capitol.texas.gov` blocks Azure IPs. Runner registered at org level. Runbook: `actions/scrape/docs/tx-backfill-runbook.md`.
 
 ---
 
+## govbot PRs
+
+| PR | Description | Status |
+|----|-------------|--------|
+| [#52](https://github.com/chihacknight/govbot/pull/52) | VA/VI scraper arg order + session fix | ✅ Merged |
+| [#53](https://github.com/chihacknight/govbot/pull/53) | MA + FL self-hosted runner | ✅ Merged 2026-07-02 |
+| [#54](https://github.com/chihacknight/govbot/pull/54) | VA scrape.sh arg order + session 2026 | ✅ Merged 2026-07-02 |
+| [#55](https://github.com/chihacknight/govbot/pull/55) | MA/FL runner docs + scrape.sh grep -E fix | ✅ Merged 2026-07-02 |
+| [#56](https://github.com/chihacknight/govbot/pull/56) | TN self-hosted runner + IP block docs | ✅ Merged 2026-07-02 |
+
 ## OpenStates PRs Filed by Tamara (tamara-builds)
 
-| PR                                                                   | Description                                                     | Status               |
-| -------------------------------------------------------------------- | --------------------------------------------------------------- | -------------------- |
-| [#5706](https://github.com/openstates/openstates-scrapers/pull/5706) | DC: scraper crashes on non-PDF attachments, dropping most bills | ✅ Merged 2026-06-29 |
-| [#5707](https://github.com/openstates/openstates-scrapers/pull/5707) | NJ: skip votes for bills missing from bill_dict                 | ✅ Merged 2026-06-29 |
-| [#5711](https://github.com/openstates/openstates-scrapers/pull/5711) | DC: handle PDF URLs with query strings in actions block         | ✅ Merged 2026-06-30 |
-| [#5712](https://github.com/openstates/openstates-scrapers/pull/5712) | Biennium end_date off-by-one (DC, MI, NC, PA)                   | ✅ Merged 2026-07-01 |
-| [#5716](https://github.com/openstates/openstates-scrapers/pull/5716) | LA: handle variable action table column count (`_` → `*_`)      | ✅ Merged 2026-07-01 |
-| [#5717](https://github.com/openstates/openstates-scrapers/pull/5717) | VA: fix csv_bills hardcoded session ID + type annotation        | 🔄 Open              |
-| [#5718](https://github.com/openstates/openstates-scrapers/pull/5718) | OK: strip (PROD) suffix from session list                       | ✅ Merged 2026-07-01 |
+| PR | Description | Status |
+|----|-------------|--------|
+| [#5706](https://github.com/openstates/openstates-scrapers/pull/5706) | DC: scraper crashes on non-PDF attachments | ✅ Merged 2026-06-29 |
+| [#5707](https://github.com/openstates/openstates-scrapers/pull/5707) | NJ: skip votes for bills missing from bill_dict | ✅ Merged 2026-06-29 |
+| [#5711](https://github.com/openstates/openstates-scrapers/pull/5711) | DC: handle PDF URLs with query strings | ✅ Merged 2026-06-30 |
+| [#5712](https://github.com/openstates/openstates-scrapers/pull/5712) | Biennium end_date off-by-one (DC, MI, NC, PA) | ✅ Merged 2026-07-01 |
+| [#5716](https://github.com/openstates/openstates-scrapers/pull/5716) | LA: handle variable action table column count | ✅ Merged 2026-07-01 |
+| [#5717](https://github.com/openstates/openstates-scrapers/pull/5717) | VA: fix csv_bills hardcoded session ID | 🔄 Open |
+| [#5718](https://github.com/openstates/openstates-scrapers/pull/5718) | OK: strip (PROD) suffix from session list | ✅ Merged 2026-07-01 |
+| [#5719](https://github.com/openstates/openstates-scrapers/pull/5719) | WV: XPath broken after site redesign | 🔄 Open |
 
 ## OpenStates Issues Filed by Tamara
 
-| Issue                                                     | Description                                                                      | Status                           |
-| --------------------------------------------------------- | -------------------------------------------------------------------------------- | -------------------------------- |
-| [#1372](https://github.com/openstates/issues/issues/1372) | DC: scraper crashes on non-PDF attachments                                       | ✅ Closed (PR #5706)             |
-| [#1373](https://github.com/openstates/issues/issues/1373) | NJ: KeyError when bill appears in vote files before MAINBILL.TXT                 | ✅ Closed (PR #5707)             |
-| [#1374](https://github.com/openstates/issues/issues/1374) | DC: scraper crashes on PDF attachment URLs with query strings                    | ✅ Closed (PR #5711)             |
-| [#1375](https://github.com/openstates/issues/issues/1375) | Biennium session end_date off by one year (DC, MI, NC, PA)                       | ✅ Closed (PR #5712)             |
-| [#1376](https://github.com/openstates/issues/issues/1376) | LA: action history table column count varies by session state                    | ✅ Closed (PR #5716)             |
-| [#1377](https://github.com/openstates/issues/issues/1377) | VA: csv_bills hardcoded session ID ignores --session argument                    | 🔄 Open (PR #5717 pending)       |
-| [#1378](https://github.com/openstates/issues/issues/1378) | OK: session list (PROD) suffix not stripped                                      | ✅ Closed (PR #5718)             |
-| [#1379](https://github.com/openstates/issues/issues/1379) | LA: bill search only returning ~7 of 525 bills — abbreviation and pattern issues | 🔄 Open — waiting on maintainers |
+| Issue | Description | Status |
+|-------|-------------|--------|
+| [#1372](https://github.com/openstates/issues/issues/1372) | Filed 2026-06 | 🔄 Open |
+| [#1373](https://github.com/openstates/issues/issues/1373) | Filed 2026-06 | 🔄 Open |
+| [#1374](https://github.com/openstates/issues/issues/1374) | Filed 2026-06 | 🔄 Open |
+| [#1375](https://github.com/openstates/issues/issues/1375) | Filed 2026-06 | 🔄 Open |
+| [#1376](https://github.com/openstates/issues/issues/1376) | LA: action table column count varies | ✅ Closed (PR #5716) |
+| [#1377](https://github.com/openstates/issues/issues/1377) | VA: csv_bills hardcoded session ID | 🔄 Open (PR #5717 pending) |
+| [#1378](https://github.com/openstates/issues/issues/1378) | OK: (PROD) suffix not stripped | ✅ Closed (PR #5718) |
+| [#1379](https://github.com/openstates/issues/issues/1379) | LA: bill search returning ~7 of 525 bills | 🔄 Open — waiting on maintainers |
+| [#1380](https://github.com/openstates/issues/issues/1380) | WV: XPath broken after site redesign | 🔄 Open (PR #5719 pending) |
+| [#1381](https://github.com/openstates/issues/issues/1381) | NM: FTP-only data, scrapelib can't handle ftp:// | 🔄 Open |
+| [#1382](https://github.com/openstates/issues/issues/1382) | AZ: Sucuri WAF blocks setsession.php POST | 🔄 Open |
+| [#1383](https://github.com/openstates/issues/issues/1383) | HI: Cloudflare WAF blocks bill pages | 🔄 Open |
+| [#1384](https://github.com/openstates/issues/issues/1384) | CT: 5 FTP endpoints, scrapelib can't handle ftp:// | 🔄 Open |
