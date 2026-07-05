@@ -15,7 +15,12 @@ site by the existing GitHub Pages workflow.
 - **Bills table** — sortable, with topic chips and links to each bill's official source
 
 All charts, tiles, and the table re-render against the same filtered slice, so the
-numbers always agree.
+numbers always agree. A "Data as of" badge under the title shows when the snapshot
+was built.
+
+Jurisdictions whose upstream scraper repo cloned but published no bills yet are
+listed as pending under the jurisdiction chart (rather than silently omitted), and
+appear automatically once their `*-legislation` repo starts carrying data.
 
 ## Where the data comes from
 

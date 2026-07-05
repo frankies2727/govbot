@@ -224,6 +224,7 @@ def main():
     bills = []
     tag_cache = {}
     state_names = {}
+    empty_repos = {}  # code -> display name for repos that cloned but had no bills
     for repo_dir in sorted(p for p in repos_dir.iterdir() if p.is_dir()):
         repo_bills = 0
         repo_code = repo_dir.name.removesuffix("-legislation").lower()
@@ -253,6 +254,8 @@ def main():
             bills.append(summarize_bill(
                 metadata, session_for(metadata, metadata_path), tags, code))
             repo_bills += 1
+        if repo_bills == 0:
+            empty_repos[repo_code] = STATE_NAMES.get(repo_code, repo_code.upper())
         print(f"{repo_dir.name}: {repo_bills} bills", file=sys.stderr)
 
     # Re-scrapes can leave multiple files for the same bill; keep the one
@@ -276,10 +279,18 @@ def main():
         key=lambda pair: pair[1],
     )
     tag_names = sorted({t for b in bills for t in b["tags"]})
+    # Jurisdictions whose repo cloned but published no bills yet (upstream
+    # scraper disabled or not producing) — surfaced so the dashboard can
+    # say "pending" rather than silently omitting them.
+    empty = sorted(
+        ({"code": c, "name": n} for c, n in empty_repos.items() if c not in state_names),
+        key=lambda e: e["name"],
+    )
     output = {
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "source": args.source_label or str(repos_dir),
         "states": [{"code": code, "name": name} for code, name in states],
+        "empty_jurisdictions": empty,
         "tags": [{"name": name, "description": tag_descriptions.get(name, "")}
                  for name in tag_names],
         "bills": bills,
