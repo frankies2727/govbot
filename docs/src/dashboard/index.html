@@ -200,6 +200,11 @@
        <a class="docs-link" href="../index.html">govbot docs</a></p>
   </header>
 
+  <div class="card" id="loading">
+    <h2>Loading bill data…</h2>
+    <p class="sub">The full dataset covers 50+ jurisdictions and can take a few seconds on slower connections.</p>
+  </div>
+
   <div class="filters" id="filters">
     <input type="search" id="f-search" placeholder="Search title or bill number…" aria-label="Search bills">
     <div class="msel" id="f-states"></div>
@@ -267,6 +272,7 @@
     .then((r) => { if (!r.ok) throw new Error(r.status + " " + r.statusText); return r.json(); })
     .then(init)
     .catch((err) => {
+      $("loading").remove();
       const div = document.createElement("div");
       div.className = "card";
       const h = document.createElement("h2");
@@ -280,6 +286,7 @@
     });
 
   function init(data) {
+    $("loading").remove();
     state.data = data;
     data.states.forEach((s) => { state.stateNames[s.code] = s.name; });
     // Fixed slot per tag from the full dataset order — filtering never repaints.
@@ -297,9 +304,13 @@
       uniqueSorted(data.bills.map((b) => b.chamber).filter(Boolean)),
       (v) => { state.filters.chamber = v; render(); }, capitalize);
 
+    let searchTimer;
     $("f-search").addEventListener("input", (e) => {
-      state.filters.search = e.target.value.trim().toLowerCase();
-      render();
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => {
+        state.filters.search = e.target.value.trim().toLowerCase();
+        render();
+      }, 150); // debounced: each render scans the full dataset
     });
     $("f-clear").addEventListener("click", () => {
       state.filters.search = ""; $("f-search").value = "";
@@ -478,16 +489,23 @@
     });
     // Continuous month axis from first to last observed month.
     const keys = Object.keys(counts).sort();
-    const months = [];
+    let months = [];
     for (let [y, m] = keys[0].split("-").map(Number); ; ) {
       const key = y + "-" + String(m).padStart(2, "0");
       months.push({ key, count: counts[key] || 0 });
       if (key === keys[keys.length - 1]) break;
       if (++m > 12) { m = 1; y++; }
     }
+    // A single stale action date can stretch the axis across decades.
+    if (months.length > 24) {
+      const dropped = months.slice(0, -24).reduce((s, m) => s + m.count, 0);
+      months = months.slice(-24);
+      $("activity-sub").textContent += " · showing last 24 months" +
+        (dropped ? " (" + fmt(dropped) + " earlier bills not charted)" : "");
+    }
 
     const W = 1100, plotH = 190, axisH = 26, H = plotH + axisH;
-    const padL = 34, padR = 8, padT = 14;
+    const padL = 52, padR = 8, padT = 14;
     const innerW = W - padL - padR, innerH = plotH - padT;
     const maxV = Math.max(...months.map((m) => m.count));
     const yMax = niceCeil(maxV);
