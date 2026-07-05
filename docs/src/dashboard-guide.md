@@ -21,8 +21,10 @@ numbers always agree.
 
 The page reads a single `data.json` produced by
 [`scripts/build_dashboard_data.py`](https://github.com/chihacknight/govbot/blob/main/scripts/build_dashboard_data.py),
-which scans every `metadata.json` in cloned govbot dataset repos and joins topic
-tags from `govbot tag` output (`tags/*.tag.json`).
+which scans cloned govbot dataset repos for bills in either format — govbot's
+OCD-files layout (`**/bills/<ID>/metadata.json`) or raw OpenStates scraper
+output (`_data/<locale>/bill_<uuid>.json`) — and joins topic tags from
+`govbot tag` output (`tags/*.tag.json`).
 
 On every Pages deploy (and on a daily 8am UTC schedule), the workflow shallow-clones
 every `*-legislation` repo from the
