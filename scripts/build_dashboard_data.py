@@ -4,6 +4,13 @@
 Scans every ``metadata.json`` under ``<govbot-dir>/repos/*/**/bills/*/`` and
 emits one compact JSON document consumed by ``docs/src/dashboard/index.html``.
 
+Two bill formats are recognized:
+
+* govbot OCD-files layout: ``**/bills/<ID>/metadata.json`` (any depth)
+* raw OpenStates scraper output: ``**/bill_<uuid>.json`` (e.g. the
+  ``_data/<locale>/`` folders committed by the scraper repos in the
+  govbot-openstates-scrapers org; see schemas/openstates.bill.schema.json)
+
 Topics come from ``govbot tag`` output (``tags/*.tag.json`` next to each
 session's ``bills/`` folder) when present. When a session has no tag files,
 an optional keyword config (``--tags-config``) provides a fallback that
@@ -32,6 +39,28 @@ from pathlib import Path
 
 MAX_SPONSORS = 5
 
+# Display names for jurisdiction codes; raw OpenStates scrape output carries
+# only an OCD jurisdiction ID string, not a display name.
+STATE_NAMES = {
+    "al": "Alabama", "ak": "Alaska", "az": "Arizona", "ar": "Arkansas",
+    "ca": "California", "co": "Colorado", "ct": "Connecticut", "de": "Delaware",
+    "fl": "Florida", "ga": "Georgia", "hi": "Hawaii", "id": "Idaho",
+    "il": "Illinois", "in": "Indiana", "ia": "Iowa", "ks": "Kansas",
+    "ky": "Kentucky", "la": "Louisiana", "me": "Maine", "md": "Maryland",
+    "ma": "Massachusetts", "mi": "Michigan", "mn": "Minnesota",
+    "ms": "Mississippi", "mo": "Missouri", "mt": "Montana", "ne": "Nebraska",
+    "nv": "Nevada", "nh": "New Hampshire", "nj": "New Jersey",
+    "nm": "New Mexico", "ny": "New York", "nc": "North Carolina",
+    "nd": "North Dakota", "oh": "Ohio", "ok": "Oklahoma", "or": "Oregon",
+    "pa": "Pennsylvania", "ri": "Rhode Island", "sc": "South Carolina",
+    "sd": "South Dakota", "tn": "Tennessee", "tx": "Texas", "ut": "Utah",
+    "vt": "Vermont", "va": "Virginia", "wa": "Washington",
+    "wv": "West Virginia", "wi": "Wisconsin", "wy": "Wyoming",
+    "dc": "District of Columbia", "pr": "Puerto Rico", "gu": "Guam",
+    "vi": "U.S. Virgin Islands", "mp": "Northern Mariana Islands",
+    "as": "American Samoa", "usa": "United States",
+}
+
 
 def parse_org_classification(raw):
     """from_organization is stored as '~{"classification": "lower"}'."""
@@ -47,7 +76,26 @@ def looks_like_bill(metadata):
     return (isinstance(metadata, dict)
             and metadata.get("identifier")
             and "title" in metadata
-            and isinstance(metadata.get("jurisdiction"), dict))
+            and "jurisdiction" in metadata)
+
+
+def parse_jurisdiction(jurisdiction, fallback_code):
+    """(code, name) from either the OCD-files dict or a raw OCD ID string."""
+    if isinstance(jurisdiction, dict):
+        division = jurisdiction.get("division_id") or jurisdiction.get("id") or ""
+        name = jurisdiction.get("name")
+    else:
+        division = str(jurisdiction or "")
+        name = None
+    match = re.search(r"(?:state|territory|district):([a-z]{2})\b", division)
+    code = match.group(1) if match else None
+    if not code and "country:us" in division:
+        code = "usa"
+    if not code:
+        code = fallback_code
+    if not name:
+        name = STATE_NAMES.get(code, (code or "?").upper())
+    return code, name
 
 
 def find_tags_dir(bill_dir, repo_dir):
@@ -120,18 +168,15 @@ def session_for(metadata, metadata_path):
     return ""
 
 
-def summarize_bill(metadata, session_id, tags):
+def summarize_bill(metadata, session_id, tags, code, name):
     actions = metadata.get("actions") or []
     dates = sorted(a["date"][:10] for a in actions if a.get("date"))
     latest = max(actions, key=lambda a: a.get("date") or "") if actions else {}
     sponsors = [s.get("name", "") for s in metadata.get("sponsorships") or []]
     url = next((s["url"] for s in metadata.get("sources") or [] if s.get("url")), None)
-    jurisdiction = metadata.get("jurisdiction") or {}
-    division = jurisdiction.get("division_id") or ""
-    code = division.rsplit(":", 1)[-1] if ":" in division else None
     return {
         "state": code,
-        "state_name": jurisdiction.get("name") or (code or "").upper(),
+        "state_name": name,
         "session": session_id,
         "id": metadata.get("identifier", ""),
         "title": metadata.get("title", ""),
@@ -177,8 +222,11 @@ def main():
     tag_cache = {}
     for repo_dir in sorted(p for p in repos_dir.iterdir() if p.is_dir()):
         repo_bills = 0
-        # Layout-agnostic: bill metadata files can sit at any depth.
-        for metadata_path in sorted(repo_dir.rglob("metadata.json")):
+        repo_code = repo_dir.name.removesuffix("-legislation").lower()
+        # Layout-agnostic: OCD-files metadata.json plus raw OpenStates
+        # scrape output (bill_<uuid>.json), each at any depth.
+        candidates = sorted(repo_dir.rglob("metadata.json")) + sorted(repo_dir.rglob("bill_*.json"))
+        for metadata_path in candidates:
             if ".git" in metadata_path.parts:
                 continue
             try:
@@ -196,9 +244,23 @@ def main():
                 tags = tag_cache[tags_home].get(metadata.get("identifier", ""), [])
             if not tags and compiled_tags:
                 tags = keyword_tags_for(metadata, compiled_tags)
-            bills.append(summarize_bill(metadata, session_for(metadata, metadata_path), tags))
+            code, name = parse_jurisdiction(metadata.get("jurisdiction"), repo_code)
+            bills.append(summarize_bill(
+                metadata, session_for(metadata, metadata_path), tags, code, name))
             repo_bills += 1
         print(f"{repo_dir.name}: {repo_bills} bills", file=sys.stderr)
+
+    # Re-scrapes can leave multiple files for the same bill; keep the one
+    # with the most recent action, then sort for deterministic output.
+    best = {}
+    for b in bills:
+        k = (b["state"], b["session"], b["id"])
+        cur = best.get(k)
+        if cur is None or (b["latest_action"] or "") > (cur["latest_action"] or ""):
+            best[k] = b
+    if len(best) < len(bills):
+        print(f"deduplicated {len(bills) - len(best)} repeated bill files", file=sys.stderr)
+    bills = sorted(best.values(), key=lambda b: (b["state"] or "", b["session"], b["id"]))
 
     if not bills:
         print(f"error: no metadata.json files found under {repos_dir}", file=sys.stderr)
