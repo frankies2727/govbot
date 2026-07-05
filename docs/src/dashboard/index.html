@@ -141,6 +141,7 @@
     flex: 0 0 auto;
   }
   .hbar-row .val { color: var(--text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .hbar-scroll { max-height: 460px; overflow-y: auto; }
 
   svg .grid-line { stroke: var(--gridline); stroke-width: 1; }
   svg .base-line { stroke: var(--baseline); stroke-width: 1; }
@@ -214,12 +215,12 @@
     <div class="card">
       <h2>Bills by jurisdiction</h2>
       <p class="sub">Click a bar to filter</p>
-      <div id="chart-states"></div>
+      <div id="chart-states" class="hbar-scroll"></div>
     </div>
     <div class="card">
       <h2>Bills by topic</h2>
       <p class="sub">Click a bar to filter · a bill can carry several topics</p>
-      <div id="chart-tags"></div>
+      <div id="chart-tags" class="hbar-scroll"></div>
     </div>
   </div>
 
