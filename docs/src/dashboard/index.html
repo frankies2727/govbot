@@ -150,6 +150,12 @@
   }
   .hbar-row .val { color: var(--text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
   .hbar-scroll { max-height: 460px; overflow-y: auto; }
+  .pending-note {
+    margin: 12px 0 0; padding-top: 10px;
+    border-top: 1px solid var(--gridline);
+    font-size: 12px; color: var(--text-muted); line-height: 1.5;
+  }
+  .pending-note b { color: var(--text-secondary); font-weight: 600; }
 
   svg .grid-line { stroke: var(--gridline); stroke-width: 1; }
   svg .base-line { stroke: var(--baseline); stroke-width: 1; }
@@ -230,6 +236,7 @@
       <h2>Bills by jurisdiction</h2>
       <p class="sub">Click a bar to filter</p>
       <div id="chart-states" class="hbar-scroll"></div>
+      <p class="pending-note" id="pending-note" hidden></p>
     </div>
     <div class="card">
       <h2>Bills by topic</h2>
@@ -348,6 +355,20 @@
       b.textContent = asof;
       $("asof-text").append(b);
       $("asof").hidden = false;
+    }
+
+    // Jurisdictions whose upstream scraper has published no bills yet.
+    const empty = data.empty_jurisdictions || [];
+    if (empty.length) {
+      const note = $("pending-note");
+      note.textContent = "";
+      const b = document.createElement("b");
+      b.textContent = empty.length + (empty.length === 1 ? " jurisdiction has" : " jurisdictions have")
+        + " no scraped data yet: ";
+      note.append(b, document.createTextNode(
+        empty.map((e) => e.name).join(", ") +
+        ". Their upstream scrapers haven't published bills — they'll appear here automatically once data lands."));
+      note.hidden = false;
     }
 
     const footer = $("footer");
