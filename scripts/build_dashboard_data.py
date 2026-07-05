@@ -43,6 +43,27 @@ def parse_org_classification(raw):
         return None
 
 
+def looks_like_bill(metadata):
+    return (isinstance(metadata, dict)
+            and metadata.get("identifier")
+            and "title" in metadata
+            and isinstance(metadata.get("jurisdiction"), dict))
+
+
+def find_tags_dir(bill_dir, repo_dir):
+    """Nearest ancestor of the bill dir (up to the repo root) with a tags/ dir.
+
+    govbot tag writes tags/ next to a session's bills/, but repo layouts vary,
+    so walk upward instead of assuming a fixed depth.
+    """
+    for ancestor in [bill_dir, *bill_dir.parents]:
+        if (ancestor / "tags").is_dir():
+            return ancestor
+        if ancestor == repo_dir:
+            break
+    return None
+
+
 def load_tag_files(session_dir):
     """Read govbot tag output: tags/<name>.tag.json -> {bill_id: [tag, ...]}."""
     bill_tags = {}
@@ -84,6 +105,19 @@ def keyword_tags_for(metadata, compiled_tags):
     texts += [a.get("abstract", "") for a in metadata.get("abstracts", [])]
     haystack = " ".join(texts).lower()
     return [name for name, patterns in compiled_tags if any(p.search(haystack) for p in patterns)]
+
+
+def session_for(metadata, metadata_path):
+    """Prefer the bill's own field; fall back to a .../sessions/<id>/... path."""
+    session = metadata.get("legislative_session")
+    if session:
+        return str(session)
+    parts = metadata_path.parts
+    if "sessions" in parts:
+        idx = parts.index("sessions")
+        if idx + 1 < len(parts):
+            return parts[idx + 1]
+    return ""
 
 
 def summarize_bill(metadata, session_id, tags):
@@ -140,18 +174,31 @@ def main():
         }
 
     bills = []
-    for metadata_path in sorted(repos_dir.glob("*/**/bills/*/metadata.json")):
-        session_dir = metadata_path.parent.parent.parent
-        try:
-            metadata = json.loads(metadata_path.read_text())
-        except (json.JSONDecodeError, OSError) as err:
-            print(f"warning: skipping unreadable {metadata_path}: {err}", file=sys.stderr)
-            continue
-        session_tags = load_tag_files(session_dir)
-        tags = session_tags.get(metadata.get("identifier", ""), [])
-        if not tags and compiled_tags:
-            tags = keyword_tags_for(metadata, compiled_tags)
-        bills.append(summarize_bill(metadata, session_dir.name, tags))
+    tag_cache = {}
+    for repo_dir in sorted(p for p in repos_dir.iterdir() if p.is_dir()):
+        repo_bills = 0
+        # Layout-agnostic: bill metadata files can sit at any depth.
+        for metadata_path in sorted(repo_dir.rglob("metadata.json")):
+            if ".git" in metadata_path.parts:
+                continue
+            try:
+                metadata = json.loads(metadata_path.read_text())
+            except (json.JSONDecodeError, OSError) as err:
+                print(f"warning: skipping unreadable {metadata_path}: {err}", file=sys.stderr)
+                continue
+            if not looks_like_bill(metadata):
+                continue
+            tags = []
+            tags_home = find_tags_dir(metadata_path.parent, repo_dir)
+            if tags_home is not None:
+                if tags_home not in tag_cache:
+                    tag_cache[tags_home] = load_tag_files(tags_home)
+                tags = tag_cache[tags_home].get(metadata.get("identifier", ""), [])
+            if not tags and compiled_tags:
+                tags = keyword_tags_for(metadata, compiled_tags)
+            bills.append(summarize_bill(metadata, session_for(metadata, metadata_path), tags))
+            repo_bills += 1
+        print(f"{repo_dir.name}: {repo_bills} bills", file=sys.stderr)
 
     if not bills:
         print(f"error: no metadata.json files found under {repos_dir}", file=sys.stderr)
