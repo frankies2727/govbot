@@ -37,7 +37,12 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-MAX_SPONSORS = 5
+# Payload discipline: at ~140k bills every byte per bill is ~140KB of
+# output, and GitHub Pages rejects files over 100MB. Ship only fields the
+# dashboard page reads, truncated to what it can display.
+MAX_SPONSORS = 3
+MAX_TITLE = 300
+MAX_ACTION_DESC = 200
 
 # Display names for jurisdiction codes; raw OpenStates scrape output carries
 # only an OCD jurisdiction ID string, not a display name.
@@ -168,23 +173,21 @@ def session_for(metadata, metadata_path):
     return ""
 
 
-def summarize_bill(metadata, session_id, tags, code, name):
+def summarize_bill(metadata, session_id, tags, code):
     actions = metadata.get("actions") or []
     dates = sorted(a["date"][:10] for a in actions if a.get("date"))
     latest = max(actions, key=lambda a: a.get("date") or "") if actions else {}
     sponsors = [s.get("name", "") for s in metadata.get("sponsorships") or []]
     url = next((s["url"] for s in metadata.get("sources") or [] if s.get("url")), None)
+    desc = latest.get("description")
     return {
         "state": code,
-        "state_name": name,
         "session": session_id,
         "id": metadata.get("identifier", ""),
-        "title": metadata.get("title", ""),
+        "title": (metadata.get("title") or "")[:MAX_TITLE],
         "chamber": parse_org_classification(metadata.get("from_organization")),
-        "classification": metadata.get("classification") or [],
-        "first_action": dates[0] if dates else None,
         "latest_action": dates[-1] if dates else None,
-        "latest_action_desc": latest.get("description"),
+        "latest_action_desc": desc[:MAX_ACTION_DESC] if desc else None,
         "sponsors": sponsors[:MAX_SPONSORS],
         "url": url,
         "tags": sorted(tags),
@@ -220,6 +223,7 @@ def main():
 
     bills = []
     tag_cache = {}
+    state_names = {}
     for repo_dir in sorted(p for p in repos_dir.iterdir() if p.is_dir()):
         repo_bills = 0
         repo_code = repo_dir.name.removesuffix("-legislation").lower()
@@ -245,8 +249,9 @@ def main():
             if not tags and compiled_tags:
                 tags = keyword_tags_for(metadata, compiled_tags)
             code, name = parse_jurisdiction(metadata.get("jurisdiction"), repo_code)
+            state_names.setdefault(code, name)
             bills.append(summarize_bill(
-                metadata, session_for(metadata, metadata_path), tags, code, name))
+                metadata, session_for(metadata, metadata_path), tags, code))
             repo_bills += 1
         print(f"{repo_dir.name}: {repo_bills} bills", file=sys.stderr)
 
@@ -267,7 +272,7 @@ def main():
         return 1
 
     states = sorted(
-        {(b["state"], b["state_name"]) for b in bills if b["state"]},
+        ((code, name) for code, name in state_names.items() if code),
         key=lambda pair: pair[1],
     )
     tag_names = sorted({t for b in bills for t in b["tags"]})
@@ -280,7 +285,8 @@ def main():
         "bills": bills,
     }
 
-    text = json.dumps(output, indent=1, ensure_ascii=False) + "\n"
+    # Compact separators: at 140k+ bills, indentation alone costs megabytes.
+    text = json.dumps(output, separators=(",", ":"), ensure_ascii=False) + "\n"
     if args.output == "-":
         sys.stdout.write(text)
     else:
