@@ -19,7 +19,7 @@ jobs:
 
     steps:
       - name: Checkout state repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -53,7 +53,7 @@ jobs:
 
     steps:
       - name: Checkout to check completion status
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Check if more work remains
         id: check

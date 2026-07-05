@@ -1,6 +1,6 @@
-# 🏛️ Montana Open States Scraper (Paused)
+# 🏛️ ✏️{ locale.name }✏️ Open States Scraper (Paused)
 
-Scheduled scraping is paused — Montana is currently out of session.
+Scheduled scraping is paused — ✏️{ locale.name }✏️ is currently out of session.
 
 The workflow can still be triggered manually via workflow_dispatch when needed.
 

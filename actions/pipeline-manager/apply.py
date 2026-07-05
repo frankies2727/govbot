@@ -21,12 +21,40 @@ from typing import Dict, Set, List, Tuple, Optional
 
 def run_shell(cmd: str, check: bool = True, capture_output: bool = True) -> str:
     """Run a shell command and return the result."""
-    result = subprocess.run(
-        cmd, shell=True, check=check, capture_output=capture_output, text=True
-    )
+    try:
+        result = subprocess.run(
+            cmd, shell=True, check=check, capture_output=capture_output, text=True
+        )
+    except subprocess.CalledProcessError as e:
+        if capture_output:
+            if e.stdout and e.stdout.strip():
+                print(f"     stdout: {e.stdout.strip()}", file=sys.stderr)
+            if e.stderr and e.stderr.strip():
+                print(f"     stderr: {e.stderr.strip()}", file=sys.stderr)
+        raise
     if capture_output:
         return result.stdout.strip()
     return ""
+
+
+def setup_git_auth():
+    """Configure git to use GH_TOKEN for HTTPS pushes to github.com."""
+    token = os.environ.get("GH_TOKEN")
+    if not token:
+        return
+    subprocess.run(
+        f'git config --global url."https://x-access-token:{token}@github.com/".insteadOf "https://github.com/"',
+        shell=True,
+        check=True,
+    )
+
+
+def get_clone_url(full_repo: str) -> str:
+    """Return an HTTPS clone URL with embedded GH_TOKEN credentials when available."""
+    token = os.environ.get("GH_TOKEN")
+    if token:
+        return f"https://x-access-token:{token}@github.com/{full_repo}.git"
+    return f"https://github.com/{full_repo}.git"
 
 
 def check_requirements():
@@ -219,7 +247,7 @@ def create_repo(
 
         try:
             run_shell(
-                f"gh repo clone '{full_repo}' '{repo_dir}' -- --depth 1 --quiet",
+                f"git clone '{get_clone_url(full_repo)}' '{repo_dir}' --depth 1 --quiet",
                 check=True,
             )
 
@@ -258,17 +286,12 @@ def create_repo(
                     check=True,
                 )
 
-            # Try to push to main, fallback to master if needed
+            # Push to main
             try:
                 run_shell(f"cd '{repo_dir}' && git push origin main", check=True)
             except subprocess.CalledProcessError:
-                # Try master branch
-                try:
-                    run_shell(f"cd '{repo_dir}' && git push origin master", check=True)
-                except subprocess.CalledProcessError:
-                    # Create and push to main
-                    run_shell(f"cd '{repo_dir}' && git branch -M main", check=True)
-                    run_shell(f"cd '{repo_dir}' && git push -u origin main", check=True)
+                run_shell(f"cd '{repo_dir}' && git branch -M main", check=True)
+                run_shell(f"cd '{repo_dir}' && git push -u origin main", check=True)
 
             print(f"     ✅ Created and initialized repository")
             return True
@@ -342,7 +365,7 @@ def update_repo(
     try:
         # Clone repo
         run_shell(
-            f"gh repo clone '{full_repo}' '{repo_dir}' -- --depth 1 --quiet", check=True
+            f"git clone '{get_clone_url(full_repo)}' '{repo_dir}' --depth 1 --quiet", check=True
         )
 
         changes_made = False
@@ -464,11 +487,7 @@ def update_repo(
             check=True,
         )
 
-        # Try main branch first, fallback to master
-        try:
-            run_shell(f"cd '{repo_dir}' && git push origin main", check=True)
-        except subprocess.CalledProcessError:
-            run_shell(f"cd '{repo_dir}' && git push origin master", check=True)
+        run_shell(f"cd '{repo_dir}' && git push origin main", check=True)
 
         print(f"     ✅ Updated repository")
         return True
@@ -525,6 +544,7 @@ def main():
 
     # Check requirements
     check_requirements()
+    setup_git_auth()
 
     # Get script directory
     script_dir = Path(__file__).parent
