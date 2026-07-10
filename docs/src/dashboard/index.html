@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>govbot — Legislation Dashboard</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect x='1' y='9' width='3' height='6' rx='1' fill='%232a78d6'/%3E%3Crect x='6' y='5' width='3' height='10' rx='1' fill='%232a78d6'/%3E%3Crect x='11' y='1' width='3' height='14' rx='1' fill='%232a78d6'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%20200%20200%22%3E%3Cpolygon%20points%3D%2282%2C68.8%20100%2C8%20100%2C100%22%20fill%3D%22%231B87B8%22/%3E%3Cpolygon%20points%3D%22100%2C8%20118%2C68.8%20100%2C100%22%20fill%3D%22%2329ABE2%22/%3E%3Cpolygon%20points%3D%22118%2C68.8%20179.7%2C54%20100%2C100%22%20fill%3D%22%23C81820%22/%3E%3Cpolygon%20points%3D%22179.7%2C54%20136%2C100%20100%2C100%22%20fill%3D%22%23ED2E38%22/%3E%3Cpolygon%20points%3D%22136%2C100%20179.7%2C146%20100%2C100%22%20fill%3D%22%231B87B8%22/%3E%3Cpolygon%20points%3D%22179.7%2C146%20118%2C131.2%20100%2C100%22%20fill%3D%22%2329ABE2%22/%3E%3Cpolygon%20points%3D%22118%2C131.2%20100%2C192%20100%2C100%22%20fill%3D%22%23C81820%22/%3E%3Cpolygon%20points%3D%22100%2C192%2082%2C131.2%20100%2C100%22%20fill%3D%22%23ED2E38%22/%3E%3Cpolygon%20points%3D%2282%2C131.2%2020.3%2C146%20100%2C100%22%20fill%3D%22%231B87B8%22/%3E%3Cpolygon%20points%3D%2220.3%2C146%2064%2C100%20100%2C100%22%20fill%3D%22%2329ABE2%22/%3E%3Cpolygon%20points%3D%2264%2C100%2020.3%2C54%20100%2C100%22%20fill%3D%22%23C81820%22/%3E%3Cpolygon%20points%3D%2220.3%2C54%2082%2C68.8%20100%2C100%22%20fill%3D%22%23ED2E38%22/%3E%3C/svg%3E">
 <style>
   :root {
     --page:           #f9f9f7;
@@ -26,8 +26,12 @@
     --bar-track: transparent;
     --hover-wash: rgba(11,11,11,0.04);
   }
+  /* Dark palette. Applied when the OS prefers dark AND the user hasn't
+     forced a choice, OR when the user explicitly picks dark via the toggle.
+     The two selectors carry identical values on purpose (plain CSS can't
+     share a declaration block across a media-query boundary). */
   @media (prefers-color-scheme: dark) {
-    :root {
+    :root:not([data-theme]) {
       --page:           #0d0d0d;
       --surface-1:      #1a1a19;
       --text-primary:   #ffffff;
@@ -46,6 +50,25 @@
       --series-8: #d95926;
       --hover-wash: rgba(255,255,255,0.06);
     }
+  }
+  :root[data-theme="dark"] {
+    --page:           #0d0d0d;
+    --surface-1:      #1a1a19;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --gridline:       #2c2c2a;
+    --baseline:       #383835;
+    --border:         rgba(255,255,255,0.10);
+    --series-1: #3987e5;
+    --series-2: #199e70;
+    --series-3: #c98500;
+    --series-4: #008300;
+    --series-5: #9085e9;
+    --series-6: #e66767;
+    --series-7: #d55181;
+    --series-8: #d95926;
+    --hover-wash: rgba(255,255,255,0.06);
   }
 
   * { box-sizing: border-box; }
@@ -74,6 +97,34 @@
   }
   .asof .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--series-2); flex: none; }
   .asof b { color: var(--text-primary); font-weight: 600; }
+
+  /* ---------- brand bar + theme toggle ---------- */
+  .brandbar {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; margin-bottom: 16px;
+  }
+  .brand {
+    display: inline-flex; align-items: center; gap: 9px;
+    text-decoration: none; color: var(--text-primary);
+  }
+  .brand .chn-star { flex: none; display: block; }
+  .brand .brand-name { font-size: 19px; font-weight: 700; letter-spacing: -0.01em; }
+  .brand .brand-name .bot { color: var(--series-1); }
+
+  .theme-toggle {
+    display: inline-flex; align-items: center; flex: none;
+    border: 1px solid var(--border); border-radius: 999px;
+    background: var(--surface-1); padding: 2px;
+  }
+  .theme-toggle button {
+    display: inline-flex; align-items: center; justify-content: center;
+    height: 28px; min-width: 34px; padding: 0 11px;
+    border: none; background: transparent; border-radius: 999px;
+    color: var(--text-secondary); font: inherit; font-size: 12.5px; line-height: 1;
+    cursor: pointer;
+  }
+  .theme-toggle button:hover { color: var(--text-primary); }
+  .theme-toggle button[aria-pressed="true"] { background: var(--series-1); color: #fff; }
 
   /* ---------- filter row ---------- */
   .filters {
@@ -209,10 +260,45 @@
   footer { margin-top: 28px; color: var(--text-muted); font-size: 12.5px; }
   footer code { background: var(--surface-1); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; }
 </style>
+<script>
+  // Apply a saved theme choice before first paint to avoid a flash of the
+  // wrong palette. "auto" (or nothing saved) falls through to the CSS
+  // prefers-color-scheme default.
+  (function () {
+    try {
+      var t = localStorage.getItem("govbot-theme");
+      if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+    } catch (e) {}
+  })();
+</script>
 </head>
 <body>
 <div class="wrap">
   <header class="top">
+    <div class="brandbar">
+      <a class="brand" href="../index.html" aria-label="govbot home">
+        <svg class="chn-star" viewBox="0 0 200 200" width="30" height="30" aria-hidden="true" focusable="false">
+          <polygon points="82,68.8 100,8 100,100"    fill="#1B87B8"/>
+          <polygon points="100,8 118,68.8 100,100"   fill="#29ABE2"/>
+          <polygon points="118,68.8 179.7,54 100,100" fill="#C81820"/>
+          <polygon points="179.7,54 136,100 100,100"  fill="#ED2E38"/>
+          <polygon points="136,100 179.7,146 100,100" fill="#1B87B8"/>
+          <polygon points="179.7,146 118,131.2 100,100" fill="#29ABE2"/>
+          <polygon points="118,131.2 100,192 100,100" fill="#C81820"/>
+          <polygon points="100,192 82,131.2 100,100"  fill="#ED2E38"/>
+          <polygon points="82,131.2 20.3,146 100,100" fill="#1B87B8"/>
+          <polygon points="20.3,146 64,100 100,100"   fill="#29ABE2"/>
+          <polygon points="64,100 20.3,54 100,100"    fill="#C81820"/>
+          <polygon points="20.3,54 82,68.8 100,100"   fill="#ED2E38"/>
+        </svg>
+        <span class="brand-name">gov<span class="bot">bot</span></span>
+      </a>
+      <div class="theme-toggle" role="group" aria-label="Color theme">
+        <button type="button" data-theme-choice="light" title="Light theme" aria-label="Light theme" aria-pressed="false">☀</button>
+        <button type="button" data-theme-choice="auto"  title="Match system" aria-label="Match system theme" aria-pressed="false">Auto</button>
+        <button type="button" data-theme-choice="dark"  title="Dark theme"  aria-label="Dark theme" aria-pressed="false">☾</button>
+      </div>
+    </div>
     <div class="title-row">
       <h1>Legislation Dashboard</h1>
       <div class="asof" id="asof" hidden><span class="dot"></span><span id="asof-text"></span></div>
@@ -280,6 +366,28 @@
   const SERIES = ["--series-1","--series-2","--series-3","--series-4",
                   "--series-5","--series-6","--series-7","--series-8"];
   const PAGE_SIZE = 100;
+
+  // ----- color theme toggle (light / dark / auto) -----
+  (function initTheme() {
+    const root = document.documentElement;
+    const buttons = Array.from(document.querySelectorAll(".theme-toggle button"));
+    const saved = () => {
+      const t = root.getAttribute("data-theme");
+      return t === "light" || t === "dark" ? t : "auto";
+    };
+    function apply(choice) {
+      if (choice === "auto") root.removeAttribute("data-theme");
+      else root.setAttribute("data-theme", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("govbot-theme");
+        else localStorage.setItem("govbot-theme", choice);
+      } catch (e) {}
+      buttons.forEach((b) =>
+        b.setAttribute("aria-pressed", String(b.dataset.themeChoice === choice)));
+    }
+    buttons.forEach((b) => b.addEventListener("click", () => apply(b.dataset.themeChoice)));
+    apply(saved());
+  })();
 
   const state = {
     data: null,
