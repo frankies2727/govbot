@@ -107,7 +107,10 @@
     display: inline-flex; align-items: center; gap: 9px;
     text-decoration: none; color: var(--text-primary);
   }
-  .brand .chn-star { flex: none; display: block; }
+  .brand .brand-logo {
+    flex: none; display: block; width: 40px; height: 40px;
+    border-radius: 9px; border: 1px solid var(--border);
+  }
   .brand .brand-name { font-size: 19px; font-weight: 700; letter-spacing: -0.01em; }
   .brand .brand-name .bot { color: var(--series-1); }
 
@@ -259,6 +262,12 @@
 
   footer { margin-top: 28px; color: var(--text-muted); font-size: 12.5px; }
   footer code { background: var(--surface-1); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; }
+  .chn-credit {
+    margin: 10px 0 0; display: flex; align-items: center; gap: 7px;
+    color: var(--text-muted); font-size: 12.5px;
+  }
+  .chn-credit svg { flex: none; }
+  .chn-credit a { color: var(--text-secondary); }
 </style>
 <script>
   // Apply a saved theme choice before first paint to avoid a flash of the
@@ -277,20 +286,7 @@
   <header class="top">
     <div class="brandbar">
       <a class="brand" href="../index.html" aria-label="govbot home">
-        <svg class="chn-star" viewBox="0 0 200 200" width="30" height="30" aria-hidden="true" focusable="false">
-          <polygon points="82,68.8 100,8 100,100"    fill="#1B87B8"/>
-          <polygon points="100,8 118,68.8 100,100"   fill="#29ABE2"/>
-          <polygon points="118,68.8 179.7,54 100,100" fill="#C81820"/>
-          <polygon points="179.7,54 136,100 100,100"  fill="#ED2E38"/>
-          <polygon points="136,100 179.7,146 100,100" fill="#1B87B8"/>
-          <polygon points="179.7,146 118,131.2 100,100" fill="#29ABE2"/>
-          <polygon points="118,131.2 100,192 100,100" fill="#C81820"/>
-          <polygon points="100,192 82,131.2 100,100"  fill="#ED2E38"/>
-          <polygon points="82,131.2 20.3,146 100,100" fill="#1B87B8"/>
-          <polygon points="20.3,146 64,100 100,100"   fill="#29ABE2"/>
-          <polygon points="64,100 20.3,54 100,100"    fill="#C81820"/>
-          <polygon points="20.3,54 82,68.8 100,100"   fill="#ED2E38"/>
-        </svg>
+        <img class="brand-logo" src="govbot-logo.png" width="40" height="40" alt="" aria-hidden="true">
         <span class="brand-name">gov<span class="bot">bot</span></span>
       </a>
       <div class="theme-toggle" role="group" aria-label="Color theme">
@@ -355,6 +351,23 @@
   </div>
 
   <footer id="footer"></footer>
+  <p class="chn-credit">
+    <svg viewBox="0 0 200 200" width="15" height="15" aria-hidden="true" focusable="false">
+      <polygon points="82,68.8 100,8 100,100"    fill="#1B87B8"/>
+      <polygon points="100,8 118,68.8 100,100"   fill="#29ABE2"/>
+      <polygon points="118,68.8 179.7,54 100,100" fill="#C81820"/>
+      <polygon points="179.7,54 136,100 100,100"  fill="#ED2E38"/>
+      <polygon points="136,100 179.7,146 100,100" fill="#1B87B8"/>
+      <polygon points="179.7,146 118,131.2 100,100" fill="#29ABE2"/>
+      <polygon points="118,131.2 100,192 100,100" fill="#C81820"/>
+      <polygon points="100,192 82,131.2 100,100"  fill="#ED2E38"/>
+      <polygon points="82,131.2 20.3,146 100,100" fill="#1B87B8"/>
+      <polygon points="20.3,146 64,100 100,100"   fill="#29ABE2"/>
+      <polygon points="64,100 20.3,54 100,100"    fill="#C81820"/>
+      <polygon points="20.3,54 82,68.8 100,100"   fill="#ED2E38"/>
+    </svg>
+    A <a href="https://chihacknight.org/">Chi Hack Night</a> project
+  </p>
 </div>
 
 <div class="tooltip" id="tooltip"></div>
